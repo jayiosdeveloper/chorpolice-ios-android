@@ -1,0 +1,48 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[autoload]
+
+MatchCfg="*res://scripts/match_cfg.gd"
+Net="*res://scripts/net.gd"
+Settings="*res://scripts/settings.gd"
+Audio="*res://scripts/audio.gd"
+
+[application]
+
+config/name="Chor Police"
+run/main_scene="res://scenes/Splash.tscn"
+config/features=PackedStringArray("4.6", "GL Compatibility")
+config/icon="res://icon.png"
+boot_splash/show=false
+boot_splash/bg_color=Color(0.1, 0.09, 0.18, 1)
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation="landscape"
+
+[input_devices]
+
+; Keep touch and mouse fully separate: touch drives the on-screen sticks (device),
+; mouse+keyboard drive desktop play. No cross-emulation → the left (move) stick can
+; never trigger a mouse-press that fires, and both sticks work together via multitouch.
+pointing/emulate_touch_from_mouse=false
+pointing/emulate_mouse_from_touch=true
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(0.16, 0.13, 0.3, 1)

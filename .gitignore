@@ -1,0 +1,21 @@
+# Backend lives in its own repo (chorpolice-server)
+chorpolice-server/
+
+# Godot — generated caches / exports (regenerated on import/build)
+**/.godot/
+**/build/
+**/.import/
+*.translation
+
+# Xcode / iOS — user + build artifacts
+**/xcuserdata/
+**/*.xcuserstate
+**/DerivedData/
+**/*.xcscmblueprint
+
+# Editor / OS / agent
+**/.DS_Store
+**/.claude/
+**/.vscode/
+**/.idea/
+**/node_modules/

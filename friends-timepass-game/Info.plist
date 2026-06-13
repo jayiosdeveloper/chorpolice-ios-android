@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Chor Police uses the local network to find and play with friends nearby over WiFi and Bluetooth.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_desi-militia._tcp</string>
+		<string>_desi-militia._udp</string>
+	</array>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Chor Police uses Bluetooth to connect with nearby friends for local multiplayer.</string>
+</dict>
+</plist>
