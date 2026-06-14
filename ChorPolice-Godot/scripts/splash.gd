@@ -7,7 +7,7 @@ var can_tap := false
 
 func _ready() -> void:
 	# automation / screenshot hooks skip straight to the menu (Lobby handles them)
-	for k in ["CP_SHOT", "CP_HOST", "CP_JOIN", "CP_LSHOT"]:
+	for k in ["CP_SHOT", "CP_HOST", "CP_JOIN", "CP_LSHOT", "CP_OCREATE", "CP_OJOIN"]:
 		if OS.has_environment(k):
 			_go()
 			return

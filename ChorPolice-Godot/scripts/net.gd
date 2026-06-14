@@ -10,6 +10,16 @@ signal message(sender_id: int, msg: Dictionary)
 signal match_started(cfg: Dictionary)
 signal connected
 signal disconnected
+signal rooms_changed                       # online: public room list updated
+signal server_ready                        # online: connected to the relay server
+signal online_error(code: String)          # online: room_full / bad_password / no_room
+signal presence_changed(count: int)        # social: number of players online
+signal players_received(data: Dictionary)  # social: a paginated online-players page
+signal friends_received(items: Array)       # social: friends list
+signal requests_received(items: Array)      # social: incoming friend requests
+signal friend_req_in(from: Dictionary)      # social: a new request arrived
+signal friend_accepted(who: Dictionary)     # social: someone accepted your request
+signal profile_received(data: Dictionary)   # social: a player's details
 
 const GAME_PORT := 7711
 const DISC_PORT := 7712
@@ -41,8 +51,27 @@ var _seq := 0
 var _seen := {}                    # sender_id -> { seq: true } dedupe for reliable
 var _log_on := false
 
+# online (WebSocket relay server) — a second transport; LAN above is untouched
+var SERVER_URL := "wss://chorpolice-relay.onrender.com"
+var online := false
+var is_owner := false
+var room_code := ""
+var rooms := {}                    # code -> {code, name, players, max, mode, map}
+var _ws: WebSocketPeer
+var _outbox := []
+var _ws_hello_sent := false
+
+# social (presence + friends)
+var pid := ""                      # this player's persistent account id
+var online_count := 0
+var players_data := {}             # last paginated online-players page
+var friends := []                  # [{pid, name, skin, online}]
+var requests := []                 # incoming friend requests [{pid, name, skin}]
+
 func _ready() -> void:
 	_log_on = OS.has_environment("CP_NET_LOG")
+	if OS.has_environment("CP_SERVER"):
+		SERVER_URL = OS.get_environment("CP_SERVER")
 	if OS.has_environment("CP_QUIT"):
 		get_tree().create_timer(float(OS.get_environment("CP_QUIT"))).timeout.connect(
 			func() -> void: get_tree().quit())
@@ -63,6 +92,7 @@ func jacket_of(id: int) -> Color:
 # MARK: host / join / leave
 
 func host() -> bool:
+	_leave_ws()                          # LAN match → leave the social server, use UDP
 	_sock = PacketPeerUDP.new()
 	if _sock.bind(GAME_PORT) != OK:
 		return false
@@ -80,6 +110,7 @@ func host() -> bool:
 	return true
 
 func join(ip: String) -> bool:
+	_leave_ws()                          # LAN match → leave the social server, use UDP
 	_sock = PacketPeerUDP.new()
 	if _sock.bind(_pick_port()) != OK:
 		return false
@@ -94,6 +125,15 @@ func join(ip: String) -> bool:
 	return true
 
 func leave() -> void:
+	if _ws:
+		_ws.close()
+		_ws = null
+	online = false
+	is_owner = false
+	room_code = ""
+	rooms.clear()
+	_outbox.clear()
+	_ws_hello_sent = false
 	if _sock:
 		_sock.close()
 		_sock = null
@@ -116,6 +156,7 @@ func _pick_port() -> int:
 # MARK: discovery (client browses)
 
 func start_browse() -> void:
+	_leave_ws()                          # LAN join → leave the social server, use UDP
 	hosts.clear()
 	_disc = PacketPeerUDP.new()
 	_disc.bind(DISC_PORT)
@@ -127,9 +168,177 @@ func stop_browse() -> void:
 		_disc.close()
 		_disc = null
 
+# MARK: online (WebSocket relay) — same public API (players/send/start_match/signals)
+
+func online_connect() -> void:
+	if online and _ws:
+		return                       # already connected/connecting — reuse the social session
+	leave()
+	online = true
+	_started = false
+	_ws_hello_sent = false
+	_outbox.clear()
+	players.clear()
+	rooms.clear()
+	_ws = WebSocketPeer.new()
+	_ws.connect_to_url(SERVER_URL)
+	if _log_on: print("[net] online connecting to ", SERVER_URL)
+
+# Drop the social/online WebSocket and switch back to LAN (UDP) mode.
+func _leave_ws() -> void:
+	if _ws:
+		_ws.close()
+		_ws = null
+	online = false
+	is_owner = false
+	room_code = ""
+	rooms.clear()
+	friends.clear()
+	requests.clear()
+	online_count = 0
+	_outbox.clear()
+	_ws_hello_sent = false
+
+func create_room(is_public: bool, password: String, max_players: int, settings: Dictionary) -> void:
+	_ws_send({"t": "create", "public": is_public, "password": password, "max": max_players, "settings": settings})
+
+func list_rooms() -> void:
+	_ws_send({"t": "list"})
+
+func join_room(code: String, password := "") -> void:
+	_ws_send({"t": "join", "code": code.strip_edges().to_upper(), "password": password})
+
+# Leave the current room but stay connected to the server (so you can browse/join another).
+func leave_room() -> void:
+	_ws_send({"t": "leave"})
+	active = false
+	is_owner = false
+	room_code = ""
+	_started = false
+	players.clear()
+	peers_changed.emit()
+
+# social
+func req_players(page := 0) -> void: _ws_send({"t": "players", "page": page})
+func friend_request(to: String) -> void: _ws_send({"t": "friend_req", "to": to})
+func friend_accept(from: String) -> void: _ws_send({"t": "friend_accept", "from": from})
+func friend_decline(from: String) -> void: _ws_send({"t": "friend_decline", "from": from})
+func unfriend_player(p: String) -> void: _ws_send({"t": "unfriend", "pid": p})
+func req_friends() -> void: _ws_send({"t": "friends"})
+func req_requests() -> void: _ws_send({"t": "requests"})
+func req_profile(p: String) -> void: _ws_send({"t": "profile", "pid": p})
+
+func _ws_send(obj: Dictionary) -> void:
+	if _ws and _ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
+		_ws.send_text(JSON.stringify(obj))
+	else:
+		_outbox.append(obj)
+
+func _poll_ws() -> void:
+	if not _ws:
+		return
+	_ws.poll()
+	var st := _ws.get_ready_state()
+	if st == WebSocketPeer.STATE_OPEN:
+		if not _ws_hello_sent:
+			_ws_hello_sent = true
+			_ws.send_text(JSON.stringify({"t": "hello", "pid": pid, "name": local_name,
+				"skin": {"jr": jacket.r, "jg": jacket.g, "jb": jacket.b}}))
+			for o in _outbox:
+				_ws.send_text(JSON.stringify(o))
+			_outbox.clear()
+		while _ws.get_available_packet_count() > 0:
+			var d = JSON.parse_string(_ws.get_packet().get_string_from_utf8())
+			if d is Dictionary:
+				_handle_ws(d)
+	elif st == WebSocketPeer.STATE_CLOSED:
+		online = false
+		active = false
+		_ws = null
+		if _log_on: print("[net] online connection closed")
+		disconnected.emit()
+
+func _handle_ws(d: Dictionary) -> void:
+	match d.get("t", ""):
+		"welcome":
+			if _log_on: print("[net] online: server welcome")
+			server_ready.emit()
+		"rooms":
+			rooms.clear()
+			for r in d.get("rooms", []):
+				rooms[str(r.get("code", ""))] = r
+			rooms_changed.emit()
+		"joined":
+			_my_id = int(d.get("you", 1))
+			room_code = str(d.get("code", ""))
+			is_owner = _my_id == int(d.get("owner", 1))
+			active = true
+			_started = false
+			_apply_online_roster(d.get("roster", {}))
+			match_cfg = d.get("settings", {})
+			if _log_on: print("[net] online: joined room ", room_code, " as id ", _my_id, " owner=", is_owner)
+			connected.emit()
+			peers_changed.emit()
+		"roster":
+			is_owner = _my_id == int(d.get("owner", _my_id))
+			_apply_online_roster(d.get("roster", {}))
+			peers_changed.emit()
+		"settings":
+			match_cfg = d.get("settings", {})
+			peers_changed.emit()
+		"start":
+			if not _started:
+				_started = true
+				match_cfg = d.get("settings", match_cfg)
+				match_started.emit(match_cfg)
+		"m":
+			message.emit(int(d.get("from", 0)), d.get("d", {}))
+		"error":
+			online_error.emit(str(d.get("code", "error")))
+		"presence":
+			online_count = int(d.get("count", 0))
+			presence_changed.emit(online_count)
+		"players":
+			players_data = d
+			players_received.emit(d)
+		"friends":
+			friends = d.get("items", [])
+			friends_received.emit(friends)
+		"requests":
+			requests = d.get("items", [])
+			requests_received.emit(requests)
+		"friend_req":
+			var f: Dictionary = d.get("from", {})
+			var dup := false
+			for r in requests:
+				if str(r.get("pid", "")) == str(f.get("pid", "")):
+					dup = true
+			if not dup:
+				requests.append(f)
+			friend_req_in.emit(f)
+			requests_received.emit(requests)
+		"friend_ok":
+			friend_accepted.emit(d.get("with", {}))
+			req_friends()
+		"profile":
+			profile_received.emit(d)
+
+func _apply_online_roster(r: Dictionary) -> void:
+	players.clear()
+	for sid in r:
+		var id := int(sid)
+		var p: Dictionary = r[sid]
+		var sk: Dictionary = p.get("skin", {})
+		players[id] = {"name": p.get("name", "P%d" % id), "color": 0,
+			"jr": float(sk.get("jr", 0.3)), "jg": float(sk.get("jg", 0.5)), "jb": float(sk.get("jb", 0.9)),
+			"team": int(p.get("team", -1)), "seen": _now()}
+
 # MARK: process loop
 
 func _process(delta: float) -> void:
+	if online:
+		_poll_ws()
+		return
 	if _disc:
 		if is_host:
 			_adv_t -= delta
@@ -290,6 +499,9 @@ func _apply_roster(r: Dictionary) -> void:
 func send(msg: Dictionary, reliable := false) -> void:
 	if not active:
 		return
+	if online:
+		_ws_send({"t": "m", "d": msg})       # server relays to the other room members
+		return
 	var rel := 1 if reliable else 0
 	_seq += 1
 	if is_host:
@@ -301,6 +513,14 @@ func send(msg: Dictionary, reliable := false) -> void:
 		_send_to_host({"t": "m", "d": msg, "r": rel, "s": _seq}, rel + 1)
 
 func start_match(cfg: Dictionary) -> void:
+	if online:
+		match_cfg = cfg
+		_ws_send({"t": "settings", "settings": cfg})
+		_ws_send({"t": "start"})
+		if not _started:
+			_started = true
+			match_started.emit(cfg)
+		return
 	if _log_on: print("[net] START ", cfg)
 	match_cfg = cfg
 	_broadcast_raw({"t": "start", "cfg": cfg}, 6)

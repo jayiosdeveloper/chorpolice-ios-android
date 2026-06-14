@@ -12,8 +12,10 @@ var owner_id := 0                    # multiplayer: who fired it (for kill credi
 
 func _ready() -> void:
 	collision_layer = 0
-	# world is layer 1; bots layer 4; player layer 2
-	collision_mask = (1 | 4) if from_player else (1 | 2)
+	# world is layer 1; bots layer 4; player layer 2; remote avatars layer 8.
+	# Your own shots (from_player) also hit remote avatars so they STOP on enemies
+	# instead of passing through; relayed shots only hit the local player (authoritative).
+	collision_mask = (1 | 4 | 8) if from_player else (1 | 2)
 	var cs := CollisionShape2D.new()
 	var c := CircleShape2D.new()
 	c.radius = (5.0 if is_flame else 3.0)
@@ -46,6 +48,10 @@ func _on_body(body: Node) -> void:
 	if body.is_in_group("player"):
 		# Victim-authoritative: the local player applies its own damage + reports it.
 		get_tree().call_group("combat", "damage_local_player", dmg, owner_id, global_position)
+		Audio.play("hit", -6.0)
+	elif body.is_in_group("remote_player"):
+		# Another player's avatar — stop the bullet here (visual); their own device
+		# deals the real damage. Do NOT apply damage locally.
 		Audio.play("hit", -6.0)
 	elif body.has_method("take_hit"):
 		body.take_hit(dmg)                 # practice bots

@@ -10,12 +10,14 @@ final class Bullet: SKNode {
 
     let team: Robot.Team
     let damage: CGFloat
+    let visualOnly: Bool
     var ownerName: String = ""
 
     init(team: Robot.Team, color: SKColor, damage: CGFloat = 11, visualOnly: Bool = false,
          flame: Bool = false) {
         self.team = team
         self.damage = damage
+        self.visualOnly = visualOnly
         super.init()
 
         if flame {
@@ -39,10 +41,11 @@ final class Bullet: SKNode {
         body.affectedByGravity = false
         body.categoryBitMask = PhysicsCategory.bullet
         body.collisionBitMask = 0
-        body.contactTestBitMask = visualOnly
-            ? (PhysicsCategory.ground | PhysicsCategory.wall)
-            : (PhysicsCategory.ground | PhysicsCategory.wall |
-               (team == .player ? PhysicsCategory.enemy : PhysicsCategory.player))
+        // Always contact the opposing side so shots STOP on avatars instead of passing
+        // through. `visualOnly` (your own networked shots) just don't deal damage —
+        // the target's own device applies the hit (victim-authoritative).
+        body.contactTestBitMask = PhysicsCategory.ground | PhysicsCategory.wall |
+            (team == .player ? PhysicsCategory.enemy : PhysicsCategory.player)
         body.usesPreciseCollisionDetection = true
         physicsBody = body
     }

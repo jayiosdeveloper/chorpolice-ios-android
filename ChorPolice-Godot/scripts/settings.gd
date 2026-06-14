@@ -43,6 +43,7 @@ const ARMY := [
 ]
 
 var player_name := ""
+var player_id := ""                      # auto, persistent — your account id for friends
 var skin_mode := 0                       # 0 Colors, 1 Army, 2 Custom
 var color_index := 0
 var army_index := 0
@@ -73,6 +74,13 @@ func _ready() -> void:
 
 func resolved_name() -> String:
 	return player_name if player_name.strip_edges() != "" else "Player"
+
+func _gen_id() -> String:
+	var chars := "0123456789abcdefghijklmnopqrstuvwxyz"
+	var s := ""
+	for i in 20:
+		s += chars[randi() % chars.length()]
+	return s
 
 static func accent_for(j: Color) -> Color:
 	return Color(j.r + (1.0 - j.r) * 0.55, j.g + (1.0 - j.g) * 0.55, j.b + (1.0 - j.b) * 0.55)
@@ -109,6 +117,10 @@ func load_cfg() -> void:
 	if c.load(PATH) != OK:
 		return
 	player_name = c.get_value("s", "name", "")
+	player_id = c.get_value("s", "pid", "")
+	if player_id == "":
+		player_id = _gen_id()
+		save_cfg()
 	skin_mode = int(c.get_value("s", "skin_mode", 0))
 	color_index = int(c.get_value("s", "color", 0))
 	army_index = int(c.get_value("s", "army", 0))
@@ -128,6 +140,7 @@ func load_cfg() -> void:
 func save_cfg() -> void:
 	var c := ConfigFile.new()
 	c.set_value("s", "name", player_name)
+	c.set_value("s", "pid", player_id)
 	c.set_value("s", "skin_mode", skin_mode)
 	c.set_value("s", "color", color_index)
 	c.set_value("s", "army", army_index)

@@ -56,8 +56,9 @@ var boot_col: Color
 func _ready() -> void:
 	_setup_colors()
 	if is_remote:
-		collision_layer = 0          # avatars don't collide; the owner is authoritative
-		collision_mask = 0
+		collision_layer = 8          # REMOTE: bullets visually stop on networked avatars…
+		collision_mask = 0           # …but the avatar itself collides with nothing (owner is authoritative)
+		add_to_group("remote_player")
 	else:
 		collision_layer = (4 if team == "enemy" else 2)
 		collision_mask = 1

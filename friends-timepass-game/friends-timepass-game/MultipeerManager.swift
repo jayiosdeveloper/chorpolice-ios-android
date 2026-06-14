@@ -40,6 +40,23 @@ struct Peer: Hashable {
     var displayName: String { "p\(id)" }
 }
 
+/// A public room in the online lobby list.
+struct RoomInfo: Identifiable {
+    var code: String, name: String, players: Int, max: Int, mode: Int, map: Int
+    var id: String { code }
+}
+
+/// A player in the online/friends lists.
+struct SocialPlayer: Identifiable {
+    var pid: String, name: String, online: Bool, friend: Bool
+    var id: String { pid }
+}
+
+struct ProfileInfo {
+    var pid: String, name: String, online: Bool, friends: Int
+    var jr: Double, jg: Double, jb: Double
+}
+
 // MARK: - Low-level UDP socket (POSIX), mirrors Godot's PacketPeerUDP
 
 private final class UDPSocket {
@@ -144,6 +161,36 @@ final class MultipeerManager: NSObject, ObservableObject {
     @Published var isRunning = false
     @Published var matchConfig: MatchConfig?
     @Published var peerInfo: [String: HelloInfo] = [:]   // keyed by displayName "p<id>"
+
+    // online (WebSocket relay) — additive; the LAN/UDP path above is untouched
+    @Published var online = false
+    @Published var serverReady = false
+    @Published var inRoom = false
+    @Published var isOwner = false
+    @Published var roomCode = ""
+    @Published var rooms: [RoomInfo] = []
+    @Published var onlineError = ""
+    // social (presence + friends)
+    @Published var onlineCount = 0
+    @Published var onlinePlayers: [SocialPlayer] = []
+    @Published var playersPage = 0
+    @Published var playersPages = 1
+    @Published var friends: [SocialPlayer] = []
+    @Published var requests: [SocialPlayer] = []
+    @Published var profile: ProfileInfo?
+    @Published var socialNotice = ""
+    var serverURL = "wss://chorpolice-relay.onrender.com"
+    private var ws: URLSessionWebSocketTask?
+    private var noticeClear: DispatchWorkItem?
+
+    /// Persistent auto account id (generated once, stored in UserDefaults).
+    private lazy var pid: String = {
+        let k = "chorpolice_pid"; let d = UserDefaults.standard
+        if let v = d.string(forKey: k), !v.isEmpty { return v }
+        let v = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(20))
+        d.set(v, forKey: k); return v
+    }()
+
     var isHost = false
     var makeHello: (() -> HelloInfo)?
     var onMessage: ((GameMessage, Peer) -> Void)?
@@ -179,6 +226,8 @@ final class MultipeerManager: NSObject, ObservableObject {
 
     func start(asHost: Bool) {
         let hello = makeHello?() ?? HelloInfo(name: "Player", skin: PlayerColors.skin(0))
+        ws?.cancel(with: .goingAway, reason: nil); ws = nil   // LAN match → leave social, use UDP
+        online = false; inRoom = false; serverReady = false
         q.async {
             self.teardownSockets()
             self.isHost = asHost
@@ -218,6 +267,7 @@ final class MultipeerManager: NSObject, ObservableObject {
 
     func stop() {
         ticker?.invalidate(); ticker = nil
+        ws?.cancel(with: .goingAway, reason: nil); ws = nil
         q.async { self.teardownSockets() }
         DispatchQueue.main.async {
             self.isRunning = false
@@ -225,6 +275,9 @@ final class MultipeerManager: NSObject, ObservableObject {
             self.didStart = false
             self.matchConfig = nil
             self.peerInfo = [:]
+            self.online = false
+            self.inRoom = false
+            self.serverReady = false
         }
     }
 
@@ -381,6 +434,11 @@ final class MultipeerManager: NSObject, ObservableObject {
     // MARK: send
 
     func send(_ message: GameMessage, reliable: Bool = false) {
+        if online {
+            guard let inner = messageToWire(message) else { return }
+            wsSend(["t": "m", "d": inner])      // server relays to the other room members
+            return
+        }
         q.async {
             guard self.isRunning, let inner = self.messageToWire(message) else { return }
             self.seq += 1
@@ -399,11 +457,194 @@ final class MultipeerManager: NSObject, ObservableObject {
     }
 
     func startMatch(config: MatchConfig) {
+        if online {
+            DispatchQueue.main.async { self.matchConfig = config; self.didStart = true }
+            wsSend(["t": "settings", "settings": wireFromMatchConfig(config)])
+            wsSend(["t": "start"])
+            return
+        }
         DispatchQueue.main.async { self.matchConfig = config; self.didStart = true }
         q.async {
             let cfg = self.wireFromMatchConfig(config)
             self.broadcastRaw(["t": "start", "cfg": cfg], times: 6)
         }
+    }
+
+    // MARK: online (WebSocket relay server) — same public API for the game scene
+
+    func onlineConnect() {
+        if online && ws != nil { return }      // already connected/connecting — reuse the session
+        leaveOnline()
+        let hello = makeHello?() ?? HelloInfo(name: "Player", skin: PlayerColors.skin(0))
+        localHello = hello
+        online = true
+        serverReady = false
+        inRoom = false
+        started = false
+        myID = 0
+        rooms = []
+        players = [:]
+        publishPeers()
+        guard let url = URL(string: serverURL) else { return }
+        ws = URLSession.shared.webSocketTask(with: url)
+        ws?.resume()
+        wsSend(["t": "hello", "pid": pid, "name": hello.name,
+                "skin": ["jr": hello.skin.mr, "jg": hello.skin.mg, "jb": hello.skin.mb]])
+        receiveLoop()
+    }
+
+    func createRoom(isPublic: Bool, password: String, settings: MatchConfig) {
+        wsSend(["t": "create", "public": isPublic, "password": password, "max": 20,
+                "settings": wireFromMatchConfig(settings)])
+    }
+
+    func listRooms() { wsSend(["t": "list"]) }
+
+    func joinRoom(code: String, password: String) {
+        wsSend(["t": "join", "code": code.uppercased(), "password": password])
+    }
+
+    func leaveRoom() {                        // leave the room but stay on the server
+        wsSend(["t": "leave"])
+        inRoom = false; isOwner = false; roomCode = ""; started = false
+        players = [:]; publishPeers()
+    }
+
+    func leaveOnline() {                      // full disconnect from the server
+        ws?.cancel(with: .goingAway, reason: nil); ws = nil
+        online = false; serverReady = false; inRoom = false; isOwner = false
+        roomCode = ""; rooms = []
+    }
+
+    // social
+    func reqPlayers(_ page: Int = 0) { wsSend(["t": "players", "page": page]) }
+    func friendRequest(_ to: String) { wsSend(["t": "friend_req", "to": to]) }
+    func friendAccept(_ from: String) { wsSend(["t": "friend_accept", "from": from]) }
+    func friendDecline(_ from: String) { wsSend(["t": "friend_decline", "from": from]) }
+    func unfriend(_ p: String) { wsSend(["t": "unfriend", "pid": p]) }
+    func reqFriends() { wsSend(["t": "friends"]) }
+    func reqRequests() { wsSend(["t": "requests"]) }
+    func reqProfile(_ p: String) { wsSend(["t": "profile", "pid": p]) }
+
+    private func socialOf(_ v: Any?) -> SocialPlayer {
+        let p = v as? [String: Any] ?? [:]
+        return SocialPlayer(pid: p["pid"] as? String ?? "", name: p["name"] as? String ?? "Player",
+                            online: (p["online"] as? Bool) ?? false, friend: (p["friend"] as? Bool) ?? false)
+    }
+
+    /// Show a bottom notice that auto-hides after a few seconds.
+    private func notice(_ s: String) {
+        socialNotice = s
+        noticeClear?.cancel()
+        let w = DispatchWorkItem { [weak self] in self?.socialNotice = "" }
+        noticeClear = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5, execute: w)
+    }
+
+    private func wsSend(_ obj: [String: Any]) {
+        guard let ws, let data = try? JSONSerialization.data(withJSONObject: obj),
+              let text = String(data: data, encoding: .utf8) else { return }
+        ws.send(.string(text)) { _ in }
+    }
+
+    private func receiveLoop() {
+        ws?.receive { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .failure:
+                DispatchQueue.main.async { self.handleWSClose() }
+            case .success(let msg):
+                if case .string(let text) = msg, let data = text.data(using: .utf8),
+                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    DispatchQueue.main.async { self.handleWS(obj) }
+                }
+                self.receiveLoop()
+            }
+        }
+    }
+
+    private func handleWSClose() {
+        guard online else { return }
+        online = false; inRoom = false; serverReady = false
+    }
+
+    private func handleWS(_ d: [String: Any]) {
+        switch d["t"] as? String {
+        case "welcome":
+            serverReady = true
+        case "rooms":
+            let arr = (d["rooms"] as? [[String: Any]]) ?? []
+            rooms = arr.map { RoomInfo(code: $0["code"] as? String ?? "",
+                                       name: $0["name"] as? String ?? "Host",
+                                       players: intOf($0["players"], 1), max: intOf($0["max"], 20),
+                                       mode: intOf($0["mode"]), map: intOf($0["map"])) }
+        case "joined":
+            myID = intOf(d["you"], 1)
+            roomCode = d["code"] as? String ?? ""
+            isOwner = myID == intOf(d["owner"], 1)
+            inRoom = true
+            started = false
+            applyOnlineRoster(d["roster"] as? [String: Any] ?? [:])
+            matchConfig = matchConfigFromWire(d["settings"] as? [String: Any] ?? [:])
+        case "roster":
+            isOwner = myID == intOf(d["owner"], myID)
+            applyOnlineRoster(d["roster"] as? [String: Any] ?? [:])
+        case "settings":
+            matchConfig = matchConfigFromWire(d["settings"] as? [String: Any] ?? [:])
+        case "start":
+            if !started {
+                started = true
+                matchConfig = matchConfigFromWire(d["settings"] as? [String: Any] ?? [:])
+                didStart = true
+            }
+        case "m":
+            let from = intOf(d["from"])
+            if let inner = d["d"] as? [String: Any], let msg = wireToMessage(inner, from: from) {
+                onMessage?(msg, Peer(id: from))
+            }
+        case "error":
+            onlineError = d["code"] as? String ?? "error"
+        case "presence":
+            onlineCount = intOf(d["count"])
+        case "players":
+            playersPage = intOf(d["page"]); playersPages = max(1, intOf(d["pages"], 1))
+            onlinePlayers = ((d["items"] as? [[String: Any]]) ?? []).map { socialOf($0) }
+        case "friends":
+            friends = ((d["items"] as? [[String: Any]]) ?? []).map { socialOf($0) }
+        case "requests":
+            requests = ((d["items"] as? [[String: Any]]) ?? []).map { socialOf($0) }
+        case "friend_req":
+            let sp = socialOf(d["from"])
+            if !requests.contains(where: { $0.pid == sp.pid }) { requests.append(sp) }
+            notice("Friend request from \(sp.name)")
+        case "friend_ok":
+            let sp = socialOf(d["with"])
+            notice("\(sp.name) accepted your request")
+            reqFriends()
+        case "profile":
+            let sk = d["skin"] as? [String: Any] ?? [:]
+            profile = ProfileInfo(pid: d["pid"] as? String ?? "", name: d["name"] as? String ?? "Player",
+                                  online: (d["online"] as? Bool) ?? false, friends: intOf(d["friends"]),
+                                  jr: dbl(sk["jr"], 0.3), jg: dbl(sk["jg"], 0.5), jb: dbl(sk["jb"], 0.9))
+        default:
+            break
+        }
+    }
+
+    private func applyOnlineRoster(_ r: [String: Any]) {
+        var ps: [Int: PlayerRec] = [:]
+        for (sid, v) in r {
+            guard let id = Int(sid), let p = v as? [String: Any] else { continue }
+            let sk = p["skin"] as? [String: Any] ?? [:]
+            let jr = dbl(sk["jr"], 0.3), jg = dbl(sk["jg"], 0.5), jb = dbl(sk["jb"], 0.9)
+            ps[id] = PlayerRec(name: p["name"] as? String ?? "P\(id)",
+                               skin: RobotSkin(mr: jr, mg: jg, mb: jb,
+                                               ar: min(1, jr + 0.3), ag: min(1, jg + 0.3), ab: min(1, jb + 0.3)))
+        }
+        let gone = Set(players.keys).subtracting(ps.keys)
+        for g in gone { onPeerLeft?(Peer(id: g)) }
+        players = ps
+        publishPeers()
     }
 
     // MARK: roster helpers

@@ -13,6 +13,7 @@ struct ContentView: View {
         case settings
         case practiceSetup
         case lobby(host: Bool)
+        case online
         case game(multiplayer: Bool, map: Int)
     }
 
@@ -49,11 +50,14 @@ struct ContentView: View {
                 onPlay: { screen = .practiceSetup },
                 onHost: { screen = .lobby(host: true) },
                 onJoin: { screen = .lobby(host: false) },
+                onOnline: { screen = .online },
                 onSettings: { screen = .settings }
             )
             .onAppear {
                 AudioManager.shared.soundEnabled = settings.soundOn
                 AudioManager.shared.setMusic(settings.musicOn)
+                net.makeHello = { HelloInfo(name: settings.resolvedName, skin: settings.skin) }
+                net.onlineConnect()      // go online for presence/friends as soon as the menu opens
             }
         case .settings:
             SettingsView(settings: settings, onClose: { screen = .menu })
@@ -65,6 +69,10 @@ struct ContentView: View {
             LobbyView(net: net, settings: settings, isHost: host,
                       onStart: { screen = .game(multiplayer: true, map: net.matchConfig?.mapIndex ?? 0) },
                       onBack: { net.stop(); screen = .menu })
+        case .online:
+            OnlineLobbyView(net: net, settings: settings,
+                            onStart: { screen = .game(multiplayer: true, map: net.matchConfig?.mapIndex ?? 0) },
+                            onBack: { screen = .menu })   // stay online for presence (menu reuses it)
         case .game(let multiplayer, let map):
             GameView(net: multiplayer ? net : nil, settings: settings, mapIndex: map,
                      onExit: { if multiplayer { net.stop() }; screen = .menu })

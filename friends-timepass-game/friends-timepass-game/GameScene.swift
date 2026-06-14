@@ -1379,7 +1379,12 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
             let name = peer.displayName
             if remotePlayers[name] == nil {
                 let r = Robot(team: .enemy, skin: s.skin)
-                r.physicsBody = nil
+                // Networked avatar: a static sensor so bullets STOP on it (visual), but it
+                // never pushes anything and isn't physics-simulated (owner positions it).
+                r.physicsBody?.isDynamic = false
+                r.physicsBody?.affectedByGravity = false
+                r.physicsBody?.collisionBitMask = 0
+                r.physicsBody?.contactTestBitMask = PhysicsCategory.bullet
                 r.position = CGPoint(x: s.x, y: s.y)
                 r.setName(s.name)
                 r.setOverlayScale(zoom * 0.85)
@@ -1888,7 +1893,12 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         let other = (bb === a) ? b : a
 
         if let robot = other.node as? Robot {
-            if isMultiplayer {
+            if bullet.visualOnly {
+                // Your own networked shot — stop on the avatar (visual only); the target's
+                // own device applies the real damage (victim-authoritative). No double-hit.
+                spawnSpark(at: bullet.position, color: .orange)
+                AudioManager.shared.play(.hit)
+            } else if isMultiplayer {
                 if robot === player && !player.isDead && !matchOver {
                     let friendly = mode >= 1 && localTeam >= 0 && teamOf(bullet.ownerName) == localTeam
                     if !friendly {

@@ -11,6 +11,7 @@ struct MainMenuView: View {
     var onPlay: () -> Void
     var onHost: () -> Void
     var onJoin: () -> Void
+    var onOnline: () -> Void
     var onSettings: () -> Void
 
     @State private var scene: MenuScene = {
@@ -70,9 +71,11 @@ struct MainMenuView: View {
                              color: Color(red: 0.20, green: 0.72, blue: 0.36), action: onPlay)
                     MenuCard(title: "Host Game", subtitle: "Start a nearby match", icon: "wifi",
                              color: Color(red: 0.18, green: 0.52, blue: 0.92), action: onHost)
-                    MenuCard(title: "Join Game", subtitle: "Join friends nearby",
+                    MenuCard(title: "Join Game", subtitle: "Join nearby (WiFi)",
                              icon: "antenna.radiowaves.left.and.right",
                              color: Color(red: 0.93, green: 0.57, blue: 0.16), action: onJoin)
+                    MenuCard(title: "Online Game", subtitle: "Play over internet", icon: "globe",
+                             color: Color(red: 0.55, green: 0.45, blue: 0.95), action: onOnline)
                 }
                 .frame(width: 320)
                 .opacity(appear ? 1 : 0)
