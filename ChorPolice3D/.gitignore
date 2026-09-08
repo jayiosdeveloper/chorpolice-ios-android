@@ -1,0 +1,12 @@
+# Godot 4 import cache — regenerated on import, never commit (huge)
+/.godot/
+
+# Export / build artifacts — regenerated on export (huge: .ipa, xcframeworks, .pck)
+/build/
+
+# OS / editor cruft
+.DS_Store
+*.tmp
+*~
+
+# Keep: *.import files (asset import settings), export_presets.cfg, assets/, scripts/, scenes/

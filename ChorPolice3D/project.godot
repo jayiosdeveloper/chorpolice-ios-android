@@ -1,0 +1,65 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[autoload]
+
+MatchCfg="*res://scripts/match_cfg.gd"
+Net="*res://scripts/net.gd"
+Settings="*res://scripts/settings.gd"
+Audio="*res://scripts/audio.gd"
+
+[application]
+
+config/name="Chor Police"
+run/main_scene="res://scenes/Splash.tscn"
+config/features=PackedStringArray("4.6", "Mobile")
+config/icon="res://icon.png"
+boot_splash/show=false
+boot_splash/bg_color=Color(0.1, 0.09, 0.18, 1)
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation="sensor_landscape"
+
+[layer_names]
+
+3d_physics/layer_1="world"
+3d_physics/layer_2="player"
+3d_physics/layer_3="bots"
+3d_physics/layer_4="remotes"
+3d_physics/layer_5="pickups"
+
+[physics]
+
+3d/default_gravity=20.0
+
+[input_devices]
+
+; Keep touch and mouse fully separate: touch drives the on-screen sticks (device),
+; mouse+keyboard drive desktop play. No cross-emulation → the left (move) stick can
+; never trigger a mouse-press that fires, and both sticks work together via multitouch.
+pointing/emulate_touch_from_mouse=false
+pointing/emulate_mouse_from_touch=true
+
+[rendering]
+
+renderer/rendering_method="mobile"
+renderer/rendering_method.mobile="mobile"
+anti_aliasing/quality/msaa_3d=1
+lights_and_shadows/directional_shadow/size=2048
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=1
+lights_and_shadows/directional_shadow/size.mobile=2048
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality.mobile=1
+textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(0.16, 0.13, 0.3, 1)
