@@ -1,0 +1,522 @@
+{
+  "asset": {
+    "generator": "glTF-Transform v4.5.0",
+    "version": "2.0",
+    "extras": {
+      "author": "Somersby (https://sketchfab.com/Somersby)",
+      "license": "CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)",
+      "source": "https://sketchfab.com/3d-models/red-baron-4f6fdcedd61d4783a5862f92282e72a8",
+      "title": "Red Baron"
+    }
+  },
+  "accessors": [
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 65532,
+      "max": [
+        0.3065357208251953,
+        0.23934058845043182,
+        1.064136028289795
+      ],
+      "min": [
+        -0.32815787196159363,
+        -0.30074140429496765,
+        0
+      ],
+      "bufferView": 0,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 65532,
+      "bufferView": 0,
+      "byteOffset": 12
+    },
+    {
+      "type": "VEC2",
+      "componentType": 5126,
+      "count": 65532,
+      "bufferView": 0,
+      "byteOffset": 24
+    },
+    {
+      "type": "SCALAR",
+      "componentType": 5125,
+      "count": 101802,
+      "bufferView": 1,
+      "byteOffset": 0
+    },
+    {
+      "type": "SCALAR",
+      "componentType": 5125,
+      "count": 101022,
+      "bufferView": 1,
+      "byteOffset": 407208
+    },
+    {
+      "type": "SCALAR",
+      "componentType": 5125,
+      "count": 101028,
+      "bufferView": 1,
+      "byteOffset": 811296
+    },
+    {
+      "type": "SCALAR",
+      "componentType": 5125,
+      "count": 102249,
+      "bufferView": 1,
+      "byteOffset": 1215408
+    },
+    {
+      "type": "SCALAR",
+      "componentType": 5125,
+      "count": 100596,
+      "bufferView": 1,
+      "byteOffset": 1624404
+    },
+    {
+      "type": "SCALAR",
+      "componentType": 5125,
+      "count": 74103,
+      "bufferView": 1,
+      "byteOffset": 2026788
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 65532,
+      "max": [
+        0.2382681965827942,
+        0.21114206314086914,
+        1.0495153665542603
+      ],
+      "min": [
+        -0.37032052874565125,
+        -0.30074140429496765,
+        0
+      ],
+      "bufferView": 2,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 65532,
+      "bufferView": 2,
+      "byteOffset": 12
+    },
+    {
+      "type": "VEC2",
+      "componentType": 5126,
+      "count": 65532,
+      "bufferView": 2,
+      "byteOffset": 24
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 65532,
+      "max": [
+        0.24178871512413025,
+        0.11947618424892426,
+        1.0783894062042236
+      ],
+      "min": [
+        -0.37879857420921326,
+        -0.5053068995475769,
+        0
+      ],
+      "bufferView": 3,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 65532,
+      "bufferView": 3,
+      "byteOffset": 12
+    },
+    {
+      "type": "VEC2",
+      "componentType": 5126,
+      "count": 65532,
+      "bufferView": 3,
+      "byteOffset": 24
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 65533,
+      "max": [
+        0.24368563294410706,
+        0.2638111710548401,
+        1.0941989421844482
+      ],
+      "min": [
+        -0.34509897232055664,
+        -0.4586676061153412,
+        0
+      ],
+      "bufferView": 4,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 65533,
+      "bufferView": 4,
+      "byteOffset": 12
+    },
+    {
+      "type": "VEC2",
+      "componentType": 5126,
+      "count": 65533,
+      "bufferView": 4,
+      "byteOffset": 24
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 65532,
+      "max": [
+        0.1378890573978424,
+        0.19524556398391724,
+        1.0769851207733154
+      ],
+      "min": [
+        -0.4161986708641052,
+        -0.3165788948535919,
+        0
+      ],
+      "bufferView": 5,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 65532,
+      "bufferView": 5,
+      "byteOffset": 12
+    },
+    {
+      "type": "VEC2",
+      "componentType": 5126,
+      "count": 65532,
+      "bufferView": 5,
+      "byteOffset": 24
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 47993,
+      "max": [
+        0.1875520646572113,
+        0.25361454486846924,
+        1.0973594188690186
+      ],
+      "min": [
+        -0.4262641966342926,
+        -0.21899254620075226,
+        0
+      ],
+      "bufferView": 6,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 47993,
+      "bufferView": 6,
+      "byteOffset": 12
+    },
+    {
+      "type": "VEC2",
+      "componentType": 5126,
+      "count": 47993,
+      "bufferView": 6,
+      "byteOffset": 24
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 2097024,
+      "byteStride": 32,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2097024,
+      "byteLength": 2323200,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 4420224,
+      "byteLength": 2097024,
+      "byteStride": 32,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 6517248,
+      "byteLength": 2097024,
+      "byteStride": 32,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 8614272,
+      "byteLength": 2097056,
+      "byteStride": 32,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 10711328,
+      "byteLength": 2097024,
+      "byteStride": 32,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 12808352,
+      "byteLength": 1535776,
+      "byteStride": 32,
+      "target": 34962
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    }
+  ],
+  "images": [
+    {
+      "mimeType": "image/png",
+      "uri": "baseColor.png"
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "red_baron.glb.bin",
+      "byteLength": 14344128
+    }
+  ],
+  "materials": [
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600",
+      "alphaMode": "MASK",
+      "alphaCutoff": 0.4529344512195122,
+      "doubleSided": true,
+      "pbrMetallicRoughness": {
+        "roughnessFactor": 0.9577051495,
+        "metallicFactor": 0,
+        "baseColorTexture": {
+          "index": 0
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600_red-baron-grass-ornamental-Va7qqJC-600_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 1,
+            "POSITION": 0,
+            "TEXCOORD_0": 2
+          },
+          "mode": 4,
+          "material": 0,
+          "indices": 3
+        }
+      ]
+    },
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600_red-baron-grass-ornamental-Va7qqJC-600_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 10,
+            "POSITION": 9,
+            "TEXCOORD_0": 11
+          },
+          "mode": 4,
+          "material": 0,
+          "indices": 4
+        }
+      ]
+    },
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600_red-baron-grass-ornamental-Va7qqJC-600_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 13,
+            "POSITION": 12,
+            "TEXCOORD_0": 14
+          },
+          "mode": 4,
+          "material": 0,
+          "indices": 5
+        }
+      ]
+    },
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600_red-baron-grass-ornamental-Va7qqJC-600_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 16,
+            "POSITION": 15,
+            "TEXCOORD_0": 17
+          },
+          "mode": 4,
+          "material": 0,
+          "indices": 6
+        }
+      ]
+    },
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600_red-baron-grass-ornamental-Va7qqJC-600_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 19,
+            "POSITION": 18,
+            "TEXCOORD_0": 20
+          },
+          "mode": 4,
+          "material": 0,
+          "indices": 7
+        }
+      ]
+    },
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600_red-baron-grass-ornamental-Va7qqJC-600_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 22,
+            "POSITION": 21,
+            "TEXCOORD_0": 23
+          },
+          "mode": 4,
+          "material": 0,
+          "indices": 8
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "Sketchfab_model",
+      "rotation": [
+        -0.7071067811865475,
+        0,
+        0,
+        0.7071067811865476
+      ],
+      "scale": [
+        0.010737674310803413,
+        0.010737674310803413,
+        0.010737674310803413
+      ],
+      "children": [
+        1
+      ]
+    },
+    {
+      "name": "Grass.fbx",
+      "rotation": [
+        0.7071067811865475,
+        0,
+        0,
+        0.7071067811865476
+      ],
+      "children": [
+        2
+      ]
+    },
+    {
+      "name": "RootNode",
+      "children": [
+        3
+      ]
+    },
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600",
+      "translation": [
+        -0.7603167295455933,
+        0,
+        -10.413887977600098
+      ],
+      "rotation": [
+        -0.7071068387877038,
+        0,
+        0,
+        0.7071067235853866
+      ],
+      "scale": [
+        100,
+        100.00000000000001,
+        100.00000000000001
+      ],
+      "children": [
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600_red-baron-grass-ornamental-Va7qqJC-600_0",
+      "mesh": 0
+    },
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600_red-baron-grass-ornamental-Va7qqJC-600_0",
+      "mesh": 1
+    },
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600_red-baron-grass-ornamental-Va7qqJC-600_0",
+      "mesh": 2
+    },
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600_red-baron-grass-ornamental-Va7qqJC-600_0",
+      "mesh": 3
+    },
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600_red-baron-grass-ornamental-Va7qqJC-600_0",
+      "mesh": 4
+    },
+    {
+      "name": "red-baron-grass-ornamental-Va7qqJC-600_red-baron-grass-ornamental-Va7qqJC-600_0",
+      "mesh": 5
+    }
+  ],
+  "scenes": [
+    {
+      "name": "Sketchfab_Scene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "scene": 0
+}
