@@ -71,6 +71,12 @@ var ads := false
 var _reload_tw: Tween
 var _chest: BoneAttachment3D
 var aim_dir := Vector3.ZERO             # world direction the gun must point (set by the game each frame)
+var _reload_tilt := Vector3.ZERO        # extra gun roll/pitch (deg) during the squad reload
+var _hand_l_override := false           # support hand leaves the foregrip (reload: goes to the mag)
+var _hand_l_target := Transform3D()
+var _throw_t := -1.0                    # 0..1 while the grenade throw arc plays, -1 = idle
+var _throw_nade: MeshInstance3D
+var _throw_tilt := Vector3.ZERO
 
 ## Point the gun along a world direction (muzzle -> crosshair target). Zero = body forward + pitch.
 func set_aim_dir(d: Vector3) -> void:
@@ -442,12 +448,30 @@ func _process(_delta: float) -> void:
 			var y := z.cross(x).normalized()
 			gun_hold.global_transform = Transform3D(Basis(x, y, z), base)
 			_gun_mount.transform = Transform3D.IDENTITY
+			_gun_mount.rotation_degrees = _reload_tilt + _throw_tilt
 			if gun.grip and gun.foregrip:
 				# markers sit at the palm; the IK tip is the wrist bone, so step back along the fingers
 				var gr := gun.grip.global_transform
 				var fg := gun.foregrip.global_transform
 				_hand_r.global_transform = Transform3D(gr.basis, gr.origin - gr.basis.y * 0.06)
-				_hand_l.global_transform = Transform3D(fg.basis, fg.origin - fg.basis.y * 0.06)
+				if _hand_l_override:
+					_hand_l.global_transform = Transform3D(fg.basis, _hand_l_target.origin - fg.basis.y * 0.03)
+				else:
+					_hand_l.global_transform = Transform3D(fg.basis, fg.origin - fg.basis.y * 0.06)
+				if _throw_t >= 0.0:
+					# wind-up behind the head, whip forward past the shoulder, back to the grip
+					var chest := _chest.global_transform.origin
+					var p0 := _hand_r.global_transform.origin
+					var p1 := chest + Vector3.UP * 0.46 + rgt * 0.34 - fwd * 0.04    # wind-up beside the ear
+					var p2 := chest + fwd * 0.70 + Vector3.UP * 0.08 + rgt * 0.12
+					var hp: Vector3
+					if _throw_t < 0.45:
+						hp = p0.lerp(p1, ease(_throw_t / 0.45, 0.5))
+					elif _throw_t < 0.72:
+						hp = p1.lerp(p2, ease((_throw_t - 0.45) / 0.27, 2.0))
+					else:
+						hp = p2.lerp(p0, ease((_throw_t - 0.72) / 0.28, 0.5))
+					_hand_r.global_transform = Transform3D(gr.basis, hp)
 				if _ik_r and not _ik_r.is_running(): _ik_r.start()
 				if _ik_l and not _ik_l.is_running(): _ik_l.start()
 		else:
@@ -571,12 +595,32 @@ func reload(dur: float, on_done: Callable = Callable()) -> void:
 		if reloading or not gun:
 			return
 		reloading = true
-		var tw := create_tween()
-		tw.tween_property(_gun_mount, "rotation_degrees", SQUAD_GUN_ROT + Vector3(35, 0, 0), dur * 0.3)
-		tw.tween_interval(dur * 0.4)
-		tw.tween_property(_gun_mount, "rotation_degrees", SQUAD_GUN_ROT, dur * 0.3)
-		tw.tween_callback(func() -> void:
+		if _reload_tw:
+			_reload_tw.kill()
+		# ONE timeline for the visual and the game logic: the gun tips up, the support hand
+		# pulls the real magazine out (a copy drops to the floor), a fresh one goes in and the
+		# hand returns — `reloading` clears and the mag is refilled exactly when that ends.
+		var mag_mesh := _find_mag_mesh()
+		var mag_home: Vector3 = mag_mesh.position if mag_mesh else Vector3.ZERO
+		var t1 := dur * 0.22; var t2 := dur * 0.18; var t3 := dur * 0.22; var t4 := dur * 0.18
+		var t5 := maxf(dur - (t1 + t2 + t3 + t4), 0.05)
+		_reload_tw = create_tween()
+		_reload_tw.tween_property(self, "_reload_tilt", Vector3(28.0, 0.0, -24.0), t1).set_trans(Tween.TRANS_SINE)
+		_reload_tw.parallel().tween_callback(func() -> void: _hand_to_mag(mag_mesh, true))
+		if mag_mesh:
+			_reload_tw.tween_property(mag_mesh, "position", mag_home + Vector3(0, -0.16, 0.02), t2).set_trans(Tween.TRANS_QUAD)
+			_reload_tw.tween_callback(func() -> void: _drop_real_mag(mag_mesh))
+			_reload_tw.tween_interval(t3 * 0.5)
+			_reload_tw.tween_callback(func() -> void: mag_mesh.visible = true)
+			_reload_tw.tween_property(mag_mesh, "position", mag_home, t3 * 0.5).set_trans(Tween.TRANS_QUAD)
+		else:
+			_reload_tw.tween_interval(t2 + t3)
+		_reload_tw.tween_callback(func() -> void: _hand_to_mag(mag_mesh, false))
+		_reload_tw.tween_property(self, "_reload_tilt", Vector3(-6.0, 0.0, 4.0), t4).set_trans(Tween.TRANS_SINE)   # chamber snap
+		_reload_tw.tween_property(self, "_reload_tilt", Vector3.ZERO, t5).set_trans(Tween.TRANS_SINE)
+		_reload_tw.tween_callback(func() -> void:
 			reloading = false
+			_hand_l_override = false
 			if on_done.is_valid(): on_done.call())
 		return
 	if not gun or reloading:
@@ -643,10 +687,93 @@ func _drop_mag() -> void:
 		d.rotation.x += dt * 4.0, 0.0, 1.4, 1.4)
 	tw.tween_callback(d.queue_free)
 
+## The magazine mesh of the current gun: the real model's "*Mag*" MeshInstance3D, else the
+## primitive build's `mag` node.
+func _find_mag_mesh() -> Node3D:
+	if not gun:
+		return null
+	var st: Array = [gun]
+	while not st.is_empty():
+		var n: Node = st.pop_back()
+		if n is MeshInstance3D and String(n.name).to_lower().contains("mag") and not String(n.name).to_lower().contains("magnum"):
+			return n
+		for c in n.get_children():
+			st.append(c)
+	return gun.mag
+
+## Support hand goes to (on=true) / back from the magazine while reloading (each frame in _process).
+func _hand_to_mag(mag_mesh: Node3D, on: bool) -> void:
+	_hand_l_override = on and mag_mesh != null and is_instance_valid(mag_mesh)
+	if _hand_l_override:
+		_hand_l_target = mag_mesh.global_transform
+
+## A copy of the magazine falls to the floor (the real one is hidden until the fresh mag goes in).
+func _drop_real_mag(mag_mesh: Node3D) -> void:
+	if not mag_mesh or not is_instance_valid(mag_mesh) or not (mag_mesh is MeshInstance3D):
+		return
+	var d := MeshInstance3D.new()
+	d.mesh = (mag_mesh as MeshInstance3D).mesh
+	for si in d.mesh.get_surface_count():
+		d.set_surface_override_material(si, (mag_mesh as MeshInstance3D).get_active_material(si))
+	d.top_level = true
+	get_tree().current_scene.add_child(d) if get_tree().current_scene else add_child(d)
+	d.global_transform = mag_mesh.global_transform
+	mag_mesh.visible = false
+	var floor_y: float = global_position.y + 0.02
+	var tw := d.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(d, "global_position:y", floor_y, 0.55).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.tween_property(d, "rotation", d.rotation + Vector3(randf_range(1.5, 3.0), randf_range(-1.0, 1.0), randf_range(1.0, 2.5)), 0.55)
+	tw.chain().tween_interval(6.0)
+	tw.chain().tween_callback(d.queue_free)
+
+## Grenade throw: the right hand leaves the gun, winds up behind the head, whips forward and
+## returns to the grip. `on_release` fires at the release point (spawn the grenade there).
+func throw_pose(dur := 0.55, on_release: Callable = Callable()) -> void:
+	if dead or not use_squad or _throw_t >= 0.0:
+		return
+	_throw_t = 0.0
+	if not _throw_nade:
+		_throw_nade = MeshInstance3D.new()
+		var sm := SphereMesh.new(); sm.radius = 0.045; sm.height = 0.09; sm.radial_segments = 10; sm.rings = 6
+		var mm := StandardMaterial3D.new(); mm.albedo_color = Color(0.24, 0.3, 0.2); mm.roughness = 0.7; mm.metallic = 0.2
+		sm.material = mm
+		_throw_nade.mesh = sm
+		_throw_nade.position = Vector3(0.0, 0.07, 0.0)
+		if skeleton and _bone("RightHand") != "":
+			var att := BoneAttachment3D.new()
+			att.bone_name = _bone("RightHand")
+			skeleton.add_child(att)
+			att.add_child(_throw_nade)
+		elif _hand_r:
+			_hand_r.add_child(_throw_nade)
+	_throw_nade.visible = true
+	if _ik_r: _ik_r.use_magnet = false
+	var tw := create_tween()
+	tw.tween_property(self, "_throw_t", 1.0, dur)
+	tw.parallel().tween_property(self, "_throw_tilt", Vector3(0.0, 0.0, -22.0), dur * 0.4).set_trans(Tween.TRANS_SINE)
+	tw.parallel().tween_interval(dur * 0.58)
+	tw.parallel().tween_callback(func() -> void:
+		if _throw_nade: _throw_nade.visible = false
+		if on_release.is_valid(): on_release.call()).set_delay(dur * 0.58)
+	tw.tween_property(self, "_throw_tilt", Vector3.ZERO, dur * 0.25).set_trans(Tween.TRANS_SINE)
+	tw.tween_callback(func() -> void:
+		_throw_t = -1.0
+		if _ik_r: _ik_r.use_magnet = true)
+
+## World position of the throwing hand (grenade spawn point).
+func throw_hand_position() -> Vector3:
+	return _hand_r.global_position if _hand_r else global_position + Vector3(0, 1.5, 0)
+
 func cancel_reload() -> void:
 	if _reload_tw:
 		_reload_tw.kill()
 	reloading = false
+	_reload_tilt = Vector3.ZERO
+	_hand_l_override = false
+	if use_squad:
+		var mm := _find_mag_mesh()
+		if mm: mm.visible = true
 	if rig:
 		rig.reload_amt = 0.0
 	if gun:

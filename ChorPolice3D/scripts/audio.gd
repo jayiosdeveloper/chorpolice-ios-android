@@ -15,6 +15,8 @@ var _sfx_i := 0
 var _jet: AudioStreamPlayer
 var _music: AudioStreamPlayer
 var _track := "menu"
+var _sfx3d: Array = []                  # positional one-shots (enemy fire / steps / explosions)
+var _sfx3d_i := 0
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS   # music/SFX keep working while paused
@@ -53,6 +55,36 @@ func play(name: String, volume_db := 0.0, pitch := 1.0) -> void:
 	p.stream = s
 	p.volume_db = volume_db
 	p.pitch_scale = pitch
+	p.play()
+
+## Positional one-shot: heard from `pos` (direction + distance), for enemy fire, footsteps, blasts.
+func play_at(name: String, pos: Vector3, volume_db := 0.0, pitch := 1.0, max_dist := 70.0) -> void:
+	if not sound_on:
+		return
+	var s = _streams.get(name)
+	if s == null:
+		return
+	var scene := get_tree().current_scene
+	if scene == null or not (scene is Node3D or scene.has_method("bullet_hit")):
+		play(name, volume_db, pitch)
+		return
+	_sfx3d = _sfx3d.filter(func(x): return is_instance_valid(x) and x.get_parent() == scene)
+	var p: AudioStreamPlayer3D
+	if _sfx3d.size() < 10:
+		p = AudioStreamPlayer3D.new()
+		p.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
+		p.unit_size = 7.0
+		p.max_db = 6.0
+		scene.add_child(p)
+		_sfx3d.append(p)
+	else:
+		p = _sfx3d[_sfx3d_i % _sfx3d.size()]
+		_sfx3d_i += 1
+	p.global_position = pos
+	p.stream = s
+	p.volume_db = volume_db
+	p.pitch_scale = pitch
+	p.max_distance = max_dist
 	p.play()
 
 func set_jet(on: bool) -> void:

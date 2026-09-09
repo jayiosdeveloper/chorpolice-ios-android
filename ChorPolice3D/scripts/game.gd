@@ -18,6 +18,8 @@ const PX_TO_M := 1.0 / 16.0           # 2D weapon speeds (px/s) → m/s
 const AIM_ASSIST_DEG := 14.0
 # magazine size + reload seconds per weapon (index = weapon type)
 const MAG_SIZE := [30, 32, 6, 10, 6, 30, 30, 90, 1]
+# enemy weapon pool (weighted): rifles most common, then SMGs, shotgun, SCAR
+const BOT_LOADOUT := [0, 0, 0, 6, 6, 5, 1, 2, 3]
 const RELOAD_TIME := [1.7, 1.5, 2.4, 1.9, 2.1, 1.6, 1.9, 2.8, 2.6]
 
 # Bot difficulty profiles (index = MatchCfg.bot_level 0..3) — the 2D values in metres.
@@ -110,6 +112,9 @@ var timer_label: Label
 var nade_button: Control
 var jump_button: Control
 var reload_button: Control
+var reload_bar: ColorRect               # fills over RELOAD_TIME under the weapon label
+var _reload_t0 := 0.0
+var _reload_dur := 1.0
 var fire_button: Control
 var fire_button_l: Control
 var scope_button: Control
@@ -188,7 +193,9 @@ func _ready() -> void:
 	player.set_name_text(Net.local_name if is_mp else Settings.resolved_name())
 	player.died.connect(_on_player_died)
 	player.slippery = bool(theme.get("slippery", false))
-	player.footstep.connect(func() -> void: Audio.play("step", -14.0))
+	player.footstep.connect(func() -> void:
+		Audio.play("step", -14.0)
+		spawn_dust(player.global_position, 0.6))
 	# face the arena centre at spawn
 	cam_yaw = atan2(player.position.x, player.position.z)
 	player.set_aim(cam_yaw, 0.0)
@@ -319,6 +326,17 @@ func _build_hud() -> void:
 	_hud_text("HEALTH", Vector2(20, 56), 12, Color(1, 1, 1, 0.65))
 	health_fill = _bar(Vector2(20, 74), Color(0.30, 0.85, 0.40))
 	weapon_label = _hud_text("", Vector2(20, 96), 15, Color(1, 1, 1, 0.92))
+	reload_bar = ColorRect.new()
+	reload_bar.color = Color(0.1, 0.1, 0.12, 0.7)
+	reload_bar.size = Vector2(150, 5)
+	reload_bar.position = Vector2(0, 30)
+	reload_bar.visible = false
+	var _rbf := ColorRect.new()
+	_rbf.name = "fill"
+	_rbf.color = Color(1.0, 0.8, 0.3)
+	_rbf.size = Vector2(0, 5)
+	reload_bar.add_child(_rbf)
+	weapon_label.add_child(reload_bar)
 
 	kills_label = Label.new()
 	kills_label.add_theme_font_size_override("font_size", 18)
@@ -497,6 +515,8 @@ func _start_reload() -> void:
 		Audio.play("swap")
 		return
 	var dur: float = RELOAD_TIME[current_weapon]
+	_reload_t0 = Time.get_ticks_msec() / 1000.0
+	_reload_dur = dur
 	Audio.play("reload")
 	player.model.reload(dur, func() -> void:
 		var need: int = MAG_SIZE[current_weapon] - mag
@@ -754,6 +774,12 @@ func _physics_process(delta: float) -> void:
 		jet_sound_on = player.jetting
 		Audio.set_jet(jet_sound_on)
 
+	if reload_bar:
+		var rl := player.is_reloading()
+		reload_bar.visible = rl
+		if rl:
+			var k := clampf((Time.get_ticks_msec() / 1000.0 - _reload_t0) / maxf(_reload_dur, 0.01), 0.0, 1.0)
+			reload_bar.get_node("fill").size.x = reload_bar.size.x * k
 	if want_fire:
 		fire_cooldown -= delta
 		if fire_cooldown <= 0.0 and not player.dead and not match_over:
@@ -988,9 +1014,7 @@ func bullet_hit(b: Bullet3D, hit: Dictionary) -> void:
 		elif f == player:
 			damage_local_player(b.dmg, b.owner_id, pos)
 	elif not b.is_flame:
-		spawn_spark(pos)
-		if hit.has("normal"):
-			spawn_bullet_hole(pos, hit["normal"])
+		spawn_impact(pos, hit.get("normal", Vector3.UP), col)
 
 # MARK: bullet decals + muzzle textures
 
@@ -1046,18 +1070,23 @@ func _throw_grenade(dir: Vector3, power: float) -> void:
 	if not unlimited_ammo:
 		grenades -= 1
 	_update_weapon_hud()
-	var start := player.global_position + Vector3(0, 1.5, 0) + player.forward() * 0.6
 	var v := dir * power + Vector3(0, 1.5, 0)
-	var g := Grenade3D.new()
-	g.game = self
-	g.from_player = true
-	g.owner_id = local_id
-	g.init_vel = v
-	g.position = start
-	add_child(g)
-	Audio.play("nade_throw")
-	if is_mp:
-		Net.send({"t": "nade", "x": start.x, "y": start.y, "z": start.z, "vx": v.x, "vy": v.y, "vz": v.z}, true)
+	var spawn := func() -> void:
+		var start: Vector3 = player.model.throw_hand_position() if player.model and player.model.has_method("throw_hand_position") else player.global_position + Vector3(0, 1.5, 0) + player.forward() * 0.6
+		var g := Grenade3D.new()
+		g.game = self
+		g.from_player = true
+		g.owner_id = local_id
+		g.init_vel = v
+		g.position = start
+		add_child(g)
+		Audio.play("nade_throw")
+		if is_mp:
+			Net.send({"t": "nade", "x": start.x, "y": start.y, "z": start.z, "vx": v.x, "vy": v.y, "vz": v.z}, true)
+	if player.model and player.model.has_method("throw_pose"):
+		player.model.throw_pose(0.55, spawn)      # arm wind-up -> release -> the grenade leaves the hand
+	else:
+		spawn.call()
 
 func _nade_drag_dir_power() -> Array:
 	var off := atan2(nade_aim.x, -nade_aim.y)
@@ -1117,36 +1146,243 @@ func spawn_explosion(pos: Vector3) -> void:
 	_spawn_explosion(pos)
 
 func _spawn_explosion(pos: Vector3) -> void:
-	var flash := MeshInstance3D.new()
-	var sm := SphereMesh.new()
-	sm.radius = 1.0
-	sm.height = 2.0
-	sm.radial_segments = 12
-	sm.rings = 6
-	var m := StandardMaterial3D.new()
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.albedo_color = Color(1, 0.85, 0.4, 0.85)
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.emission_enabled = true
-	m.emission = Color(1, 0.6, 0.2)
-	m.emission_energy_multiplier = 3.0
-	sm.material = m
-	flash.mesh = sm
-	flash.position = pos
-	flash.scale = Vector3(0.3, 0.3, 0.3)
-	add_child(flash)
+	# flash light
 	var light := OmniLight3D.new()
-	light.light_color = Color(1, 0.6, 0.25)
-	light.light_energy = 6.0
-	light.omni_range = 9.0
+	light.light_color = Color(1, 0.62, 0.25)
+	light.light_energy = 14.0
+	light.omni_range = 14.0
 	light.shadow_enabled = false
-	flash.add_child(light)
-	var tw := create_tween()
-	tw.tween_property(flash, "scale", Vector3(2.4, 2.4, 2.4), 0.25)
-	tw.parallel().tween_property(m, "albedo_color:a", 0.0, 0.3)
-	tw.parallel().tween_property(light, "light_energy", 0.0, 0.3)
-	tw.tween_callback(flash.queue_free)
-	_burst(pos, 36, 0.7, 9.0, Color(1, 0.55, 0.2), 1.6)
+	light.position = pos + Vector3(0, 0.6, 0)
+	add_child(light)
+	var tl := create_tween()
+	tl.tween_property(light, "light_energy", 0.0, 0.35)
+	tl.tween_callback(light.queue_free)
+	# fireball: hot additive flame sprites bursting outward
+	_fx_particles(pos, "res://assets/real/fx/flame_soft.png", 46, 0.55, 5.0, 11.0, Vector3(0, 3.0, 0), 0.9, 1.8,
+		[Color(1, 0.98, 0.8, 1), Color(1, 0.6, 0.15, 1), Color(0.5, 0.15, 0.03, 0.6), Color(0.2, 0.1, 0.05, 0)], true, 0.16)
+	# smoke: slow, rising, fading grey
+	_fx_particles(pos + Vector3(0, 0.4, 0), "res://assets/real/fx/flame_soft.png", 34, 1.9, 1.2, 3.2, Vector3(0, 1.4, 0), 1.4, 2.8,
+		[Color(0.25, 0.22, 0.2, 0.0), Color(0.3, 0.28, 0.26, 0.55), Color(0.35, 0.34, 0.33, 0.3), Color(0.4, 0.4, 0.4, 0)], false, 0.35)
+	# debris: dark chunks thrown up with gravity
+	_fx_debris(pos, 26, Color(0.16, 0.14, 0.12), 0.09, 9.0, 16.0, 1.6)
+	# sparks
+	_burst(pos, 30, 0.35, 12.0, Color(1, 0.75, 0.3), 0.7)
+	# shockwave ring on the ground
+	var ring := MeshInstance3D.new()
+	var tm := TorusMesh.new()
+	tm.inner_radius = 0.75
+	tm.outer_radius = 1.0
+	var rm := StandardMaterial3D.new()
+	rm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	rm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	rm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	rm.albedo_color = Color(1, 0.8, 0.5, 0.7)
+	tm.material = rm
+	ring.mesh = tm
+	ring.position = pos + Vector3(0, 0.15, 0)
+	ring.scale = Vector3(0.3, 0.12, 0.3)
+	add_child(ring)
+	var tr := create_tween()
+	tr.set_parallel(true)
+	tr.tween_property(ring, "scale", Vector3(7.0, 0.05, 7.0), 0.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tr.tween_property(rm, "albedo_color:a", 0.0, 0.4)
+	tr.chain().tween_callback(ring.queue_free)
+	# scorch mark on whatever is below
+	var space := get_world_3d().direct_space_state
+	var q := PhysicsRayQueryParameters3D.create(pos + Vector3(0, 1.0, 0), pos - Vector3(0, 3.0, 0), 1)
+	var h := space.intersect_ray(q)
+	if h:
+		var dec := MeshInstance3D.new()
+		var qm := QuadMesh.new()
+		qm.size = Vector2(3.2, 3.2)
+		var dm := StandardMaterial3D.new()
+		dm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		dm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		dm.albedo_texture = load("res://assets/real/fx/scorch.png")
+		dm.albedo_color = Color(1, 1, 1, 0.9)
+		dm.cull_mode = BaseMaterial3D.CULL_DISABLED
+		qm.material = dm
+		dec.mesh = qm
+		add_child(dec)
+		var nrm: Vector3 = h["normal"]
+		var up := Vector3.FORWARD if absf(nrm.dot(Vector3.UP)) > 0.95 else Vector3.UP
+		dec.global_transform = Transform3D(Basis.looking_at(-nrm, up), h["position"] + nrm * 0.03)
+		dec.rotate_object_local(Vector3.FORWARD, randf() * TAU)
+		var td := create_tween()
+		td.tween_interval(14.0)
+		td.tween_property(dm, "albedo_color:a", 0.0, 3.0)
+		td.tween_callback(dec.queue_free)
+	# felt: shake by distance + positional boom
+	if player:
+		var d := player.global_position.distance_to(pos)
+		shake(10.0 * clampf(1.0 - d / 30.0, 0.0, 1.0))
+	Audio.play_at("explosion", pos, 4.0, 1.0, 120.0)
+
+## Generic one-shot sprite particle burst (billboard quads), additive or alpha.
+func _fx_particles(pos: Vector3, tex: String, amount: int, life: float, v0: float, v1: float, gravity: Vector3,
+		s0: float, s1: float, ramp: Array, additive: bool, size: float) -> void:
+	var p := CPUParticles3D.new()
+	p.one_shot = true
+	p.explosiveness = 1.0
+	p.amount = amount
+	p.lifetime = life
+	p.local_coords = false
+	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	p.emission_sphere_radius = 0.25
+	p.direction = Vector3(0, 1, 0)
+	p.spread = 180.0
+	p.initial_velocity_min = v0
+	p.initial_velocity_max = v1
+	p.gravity = gravity
+	p.damping_min = 2.0
+	p.damping_max = 4.0
+	p.angular_velocity_min = -120.0
+	p.angular_velocity_max = 120.0
+	p.scale_amount_min = s0
+	p.scale_amount_max = s1
+	var sc := Curve.new()
+	sc.add_point(Vector2(0.0, 0.5)); sc.add_point(Vector2(0.3, 1.0)); sc.add_point(Vector2(1.0, 0.7))
+	p.scale_amount_curve = sc
+	var q := QuadMesh.new()
+	q.size = Vector2(size, size)
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	if additive:
+		mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	mat.vertex_color_use_as_albedo = true
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	if ResourceLoader.exists(tex):
+		mat.albedo_texture = load(tex)
+	q.material = mat
+	p.mesh = q
+	p.color_ramp = Fighter._ramp(ramp)
+	p.position = pos
+	add_child(p)
+	p.emitting = true
+	get_tree().create_timer(life + 0.3).timeout.connect(p.queue_free)
+
+## Solid chunks with gravity (debris, chips, splinters).
+func _fx_debris(pos: Vector3, amount: int, col: Color, size: float, v0: float, v1: float, life: float) -> void:
+	var p := CPUParticles3D.new()
+	p.one_shot = true
+	p.explosiveness = 1.0
+	p.amount = amount
+	p.lifetime = life
+	p.local_coords = false
+	p.direction = Vector3(0, 1, 0)
+	p.spread = 70.0
+	p.initial_velocity_min = v0
+	p.initial_velocity_max = v1
+	p.gravity = Vector3(0, -22.0, 0)
+	p.angular_velocity_min = -400.0
+	p.angular_velocity_max = 400.0
+	p.scale_amount_min = 0.5
+	p.scale_amount_max = 1.3
+	var b := BoxMesh.new()
+	b.size = Vector3(size, size * 0.6, size * 1.4)
+	var m := StandardMaterial3D.new()
+	m.albedo_color = col
+	m.roughness = 0.9
+	b.material = m
+	p.mesh = b
+	p.position = pos
+	add_child(p)
+	p.emitting = true
+	get_tree().create_timer(life + 0.2).timeout.connect(p.queue_free)
+
+## Small dust puff at the feet (footsteps / landing).
+func spawn_dust(pos: Vector3, k := 1.0) -> void:
+	var col := _ground_dust_color()
+	_fx_particles(pos + Vector3(0, 0.05, 0), "res://assets/real/fx/flame_soft.png", int(6 * k) + 3, 0.55, 0.4, 1.3 * k,
+		Vector3(0, 0.6, 0), 0.5 * k, 1.0 * k, [Color(col, 0.0), Color(col, 0.45), Color(col, 0.25), Color(col, 0.0)], false, 0.32)
+
+func _ground_dust_color() -> Color:
+	var th := String(theme.get("ground", "")) if theme else ""
+	if th.contains("sand") or th.contains("desert"):
+		return Color(0.76, 0.66, 0.5)
+	if th.contains("grass") or th.contains("forest"):
+		return Color(0.45, 0.42, 0.3)
+	return Color(0.55, 0.53, 0.5)
+
+## What a bullet hit, judged from the collider's mesh material / texture name.
+func _surface_kind(col: Object) -> String:
+	var mi: MeshInstance3D = null
+	var cands: Array = []
+	if col is Node:
+		cands.append(col)
+		cands.append_array((col as Node).get_children())
+		var par := (col as Node).get_parent()
+		if par:
+			cands.append(par)
+			cands.append_array(par.get_children())
+	for c in cands:
+		if c is MeshInstance3D and (c as MeshInstance3D).mesh:
+			mi = c
+			break
+	if mi == null:
+		return "stone"
+	var mat := mi.get_active_material(0)
+	var key := ""
+	if mat is BaseMaterial3D:
+		var bm := mat as BaseMaterial3D
+		if bm.albedo_texture:
+			key = String(bm.albedo_texture.resource_path).to_lower()
+		key += " " + String(bm.resource_name).to_lower()
+		if key.strip_edges() == "":
+			var c := bm.albedo_color
+			if c.r > c.b + 0.15 and c.g > c.b + 0.05:
+				return "sand"
+			if c.r < 0.3 and c.g < 0.3 and c.b < 0.3:
+				return "metal"
+	for k in ["sand", "desert", "dirt", "ground", "gravel"]:
+		if key.contains(k): return "sand"
+	for k in ["grass", "forest", "moss", "leaves"]:
+		if key.contains(k): return "dirt"
+	for k in ["metal", "diamond", "steel", "container", "barrel"]:
+		if key.contains(k): return "metal"
+	for k in ["wood", "plank", "crate", "log", "bark"]:
+		if key.contains(k): return "wood"
+	return "stone"
+
+## Surface-specific bullet impact (replaces the one-size spark).
+func spawn_impact(pos: Vector3, normal: Vector3, col: Object) -> void:
+	var kind := _surface_kind(col)
+	var n := normal.normalized() if normal.length_squared() > 0.001 else Vector3.UP
+	var p := pos + n * 0.04
+	match kind:
+		"sand":
+			var c := Color(0.78, 0.68, 0.5)
+			_fx_particles(p, "res://assets/real/fx/flame_soft.png", 12, 0.6, 1.2, 3.0, Vector3(0, -1.5, 0), 0.5, 1.1,
+				[Color(c, 0.0), Color(c, 0.6), Color(c, 0.35), Color(c, 0.0)], false, 0.28)
+		"dirt":
+			var c := Color(0.42, 0.36, 0.26)
+			_fx_particles(p, "res://assets/real/fx/flame_soft.png", 10, 0.55, 1.0, 2.6, Vector3(0, -2.0, 0), 0.5, 1.0,
+				[Color(c, 0.0), Color(c, 0.6), Color(c, 0.3), Color(c, 0.0)], false, 0.26)
+			_fx_debris(p, 6, Color(0.3, 0.25, 0.18), 0.03, 2.0, 5.0, 0.6)
+		"metal":
+			_burst(p, 16, 0.22, 9.0, Color(1, 0.85, 0.45), 0.45)
+			_fx_debris(p, 8, Color(1.0, 0.8, 0.35), 0.012, 4.0, 9.0, 0.5)
+			var l := OmniLight3D.new()
+			l.light_color = Color(1, 0.8, 0.4); l.light_energy = 2.5; l.omni_range = 2.5; l.shadow_enabled = false
+			l.position = p; add_child(l)
+			var tl := create_tween(); tl.tween_property(l, "light_energy", 0.0, 0.08); tl.tween_callback(l.queue_free)
+			spawn_bullet_hole(pos, normal)
+		"wood":
+			_fx_debris(p, 10, Color(0.45, 0.3, 0.16), 0.03, 2.5, 6.0, 0.7)
+			var c := Color(0.5, 0.4, 0.28)
+			_fx_particles(p, "res://assets/real/fx/flame_soft.png", 6, 0.45, 0.8, 2.0, Vector3(0, -1.0, 0), 0.4, 0.8,
+				[Color(c, 0.0), Color(c, 0.5), Color(c, 0.2), Color(c, 0.0)], false, 0.22)
+			spawn_bullet_hole(pos, normal)
+		_:
+			var c := Color(0.6, 0.58, 0.55)
+			_fx_particles(p, "res://assets/real/fx/flame_soft.png", 9, 0.5, 0.9, 2.4, Vector3(0, -1.2, 0), 0.5, 1.0,
+				[Color(c, 0.0), Color(c, 0.6), Color(c, 0.3), Color(c, 0.0)], false, 0.26)
+			_fx_debris(p, 7, Color(0.5, 0.48, 0.45), 0.025, 2.5, 6.0, 0.6)
+			_burst(p, 5, 0.18, 5.0, Color(1, 0.75, 0.35), 0.35)
+			spawn_bullet_hole(pos, normal)
+
 	_burst(pos + Vector3(0, 0.3, 0), 18, 1.1, 3.0, Color(0.35, 0.35, 0.35), 2.4)
 	shake(9.0)
 	Audio.play("explosion")
@@ -1378,6 +1614,8 @@ func _on_net_message(sender: int, msg: Dictionary) -> void:
 		"fire":
 			_remote_fire(sender, msg)
 		"nade":
+			if remotes.has(sender) and remotes[sender].model and remotes[sender].model.has_method("throw_pose"):
+				remotes[sender].model.throw_pose(0.55)
 			var g := Grenade3D.new()
 			g.game = self
 			g.from_player = false
@@ -1428,7 +1666,7 @@ func _remote_fire(sender: int, msg: Dictionary) -> void:
 				_spawn_bullet(origin, _spread(dir, d["spread"]), d, false, false, sender)
 			_muzzle_flash(origin, Color(1, 0.5, 0.3))
 	var dist := origin.distance_to(player.global_position)
-	Audio.play(_fire_sound_name(w), linear_to_db(clampf(1.0 - dist / 40.0, 0.15, 0.8)))
+	Audio.play_at(_fire_sound_name(w), origin, -2.0)
 	if remotes.has(sender) and remotes[sender].model:
 		remotes[sender].model.recoil()
 		remotes[sender].model.fire_pose()
@@ -1746,24 +1984,30 @@ func _spawn_bot() -> void:
 	b.is_bot = true
 	b.use_squad = true                    # enemies use the real rigged character (proper hands/gun)
 	b.team = "enemy"
+	b.current_weapon = BOT_LOADOUT[randi() % BOT_LOADOUT.size()]   # mixed enemy weapons
 	b.name_text = nm
 	b.position = pos
 	b.slippery = bool(theme.get("slippery", false))
 	add_child(b)
+	b.set_weapon(b.current_weapon)
 	b.footstep.connect(func() -> void:
 		var dd: float = b.global_position.distance_to(player.global_position)
 		if dd < 18.0:
-			Audio.play("step", linear_to_db(clampf(0.5 - dd / 36.0, 0.05, 0.5))))
+			Audio.play_at("step", b.global_position, -6.0)
+			spawn_dust(b.global_position, 0.5))
 	b.died.connect(_on_bot_died.bind(b))
 	bots.append(b)
 	_spawn_flash(pos + Vector3(0, 1, 0))
 
 func _on_bot_died(b: Fighter) -> void:
 	kills += 1
-	shake(6.0)
-	_spawn_explosion(b.global_position + Vector3(0, 0.9, 0))
+	shake(2.5)
+	Audio.play("hit", -3.0, 0.8)                      # kill confirm
 	bots.erase(b)
-	b.queue_free()
+	b._set_body_visible(false)                        # death fall, then a corpse is left behind
+	get_tree().create_timer(1.7).timeout.connect(func() -> void:
+		if is_instance_valid(b):
+			b.queue_free())
 
 func _spawn_flash(pos: Vector3) -> void:
 	var f := MeshInstance3D.new()
@@ -1846,7 +2090,8 @@ func _run_bot_ai(b: Fighter, delta: float) -> void:
 	b.control(b.move_dir * speed_k, want_jet, jump, delta)
 
 	# aim (higher levels lead the moving target)
-	var flight := dist / (float(Weapons.data(0)["speed"]) * PX_TO_M)
+	var wd := Weapons.data(b.current_weapon)
+	var flight := dist / (float(wd["speed"]) * PX_TO_M)
 	var target := player.global_position + Vector3(0, 1.0, 0) + player.velocity * flight * float(prof["lead"])
 	var m := b.muzzle_position()
 	var ad := target - m
@@ -1857,12 +2102,13 @@ func _run_bot_ai(b: Fighter, delta: float) -> void:
 	b.fire_t -= delta
 	if b.fire_t <= 0.0 and not player.dead and dist < float(prof["range"]) and not match_over and b.los:
 		var dir := _spread(ad.normalized(), float(prof["aimError"]))
-		var rifle := Weapons.data(0)
 		b.model.recoil(0.8)
-		_spawn_bullet(m, dir, rifle, false, false)
+		for i in int(wd["pellets"]):
+			_spawn_bullet(m, _spread(dir, float(wd["spread"]) * 0.6), wd, false, false)
 		_muzzle_flash(m, Color(1, 0.5, 0.3))
-		Audio.play("rifle", linear_to_db(clampf(1.0 - dist / 40.0, 0.2, 0.9)))
-		b.fire_t = randf_range(prof["fireMin"], prof["fireMax"])
+		if b.model.has_method("fire_pose"): b.model.fire_pose()
+		Audio.play_at(_fire_sound_name(b.current_weapon), m, -2.0)
+		b.fire_t = maxf(randf_range(prof["fireMin"], prof["fireMax"]), float(wd["interval"]) * 1.6)
 
 # MARK: input (touch sticks + keyboard/mouse)
 

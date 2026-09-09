@@ -270,6 +270,7 @@ func animate(delta: float, grounded := true, hspeed := -1.0) -> void:
 	if not was_on_floor:
 		was_on_floor = true
 		land_t = 0.18
+		footstep.emit()                     # landing thump + dust
 	if land_t > 0.0:
 		land_t -= delta
 		model.play("land")
@@ -335,13 +336,60 @@ func _set_body_visible(v: bool) -> void:
 			model.revive()
 		else:
 			model.die()
+			# once the fall has settled, leave a corpse behind (stays ~8 s, then fades) and
+			# hide the live model so this fighter can respawn / be freed
 			var tw := create_tween()
-			tw.tween_interval(3.0)
+			tw.tween_interval(1.4)
 			tw.tween_callback(func() -> void:
 				if dead and is_instance_valid(model):
+					_leave_corpse()
 					model.visible = false)
 	if not v:
 		set_thrust(false)
+
+## Duplicate the posed skinned mesh as a static corpse in the scene (no anim / IK / rig),
+## keep it for a while, then fade it out.
+func _leave_corpse() -> void:
+	if not model or not model._inst or not get_tree().current_scene:
+		return
+	var src: Node3D = model._inst
+	var c: Node3D = src.duplicate()
+	var strip: Array = []
+	var st: Array = [c]
+	while not st.is_empty():
+		var n: Node = st.pop_back()
+		if n is AnimationPlayer or n is SkeletonIK3D or n is AimRig:
+			strip.append(n)
+		for ch in n.get_children():
+			st.append(ch)
+	for n in strip:
+		n.get_parent().remove_child(n)
+		n.queue_free()
+	get_tree().current_scene.add_child(c)
+	c.global_transform = src.global_transform
+	var tw := c.create_tween()
+	tw.tween_interval(8.0)
+	tw.tween_callback(func() -> void:
+		var mats: Array = []
+		var s2: Array = [c]
+		while not s2.is_empty():
+			var n: Node = s2.pop_back()
+			if n is MeshInstance3D and (n as MeshInstance3D).mesh:
+				var mi := n as MeshInstance3D
+				for si in mi.mesh.get_surface_count():
+					var m := mi.get_active_material(si)
+					if m is BaseMaterial3D:
+						var d := (m as BaseMaterial3D).duplicate() as BaseMaterial3D
+						d.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+						mi.set_surface_override_material(si, d)
+						mats.append(d)
+			for ch in n.get_children():
+				s2.append(ch)
+		var ft := c.create_tween()
+		ft.set_parallel(true)
+		for d in mats:
+			ft.tween_property(d, "albedo_color:a", 0.0, 1.5)
+		ft.chain().tween_callback(c.queue_free))
 
 func _overlay_visible(v: bool) -> void:
 	if overlay:
