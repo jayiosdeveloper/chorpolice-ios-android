@@ -19,7 +19,12 @@ var _track := "menu"
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS   # music/SFX keep working while paused
 	for n in NAMES:
-		var s = load("res://assets/audio/%s.wav" % n)
+		var s = null
+		for ext in ["ogg", "wav"]:                         # prefer a real .ogg if present (e.g. footsteps)
+			var pth := "res://assets/audio/%s.%s" % [n, ext]
+			if ResourceLoader.exists(pth):
+				s = load(pth)
+				break
 		if s is AudioStreamWAV and (n == "jet" or n.begins_with("music")):
 			s.loop_mode = AudioStreamWAV.LOOP_FORWARD
 			s.loop_begin = 0
@@ -37,7 +42,7 @@ func _ready() -> void:
 	sound_on = Settings.sound_on
 	music_on = Settings.music_on
 
-func play(name: String, volume_db := 0.0) -> void:
+func play(name: String, volume_db := 0.0, pitch := 1.0) -> void:
 	if not sound_on:
 		return
 	var s = _streams.get(name)
@@ -47,6 +52,7 @@ func play(name: String, volume_db := 0.0) -> void:
 	_sfx_i = (_sfx_i + 1) % _sfx.size()
 	p.stream = s
 	p.volume_db = volume_db
+	p.pitch_scale = pitch
 	p.play()
 
 func set_jet(on: bool) -> void:

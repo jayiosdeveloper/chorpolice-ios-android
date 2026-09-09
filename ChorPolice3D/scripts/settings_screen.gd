@@ -113,23 +113,29 @@ func _ready() -> void:
 	sb.set_content_margin_all(20)
 	pc.add_theme_stylebox_override("panel", sb)
 	add_child(pc)
+	# ScrollContainer must be the PanelContainer's ONLY child (a 2nd child breaks its
+	# layout and the scroll). Vertical touch-drag scroll works over the cards.
 	var sc := ScrollContainer.new()
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	sc.add_theme_constant_override("margin_right", 4)
+	sc.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	pc.add_child(sc)
 	content = VBoxContainer.new()
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	content.add_theme_constant_override("separation", 12)
 	sc.add_child(content)
-	# a soft fade at the panel's bottom edge so scrolled-off cards taper out (finished look)
+	# soft bottom fade — added to the screen (NOT inside the PanelContainer) so it can't
+	# interfere with the scroll; it just tapers scrolled-off cards for a finished look.
 	var fade := TextureRect.new()
-	fade.texture = UI.grad_tex([Color(0.05, 0.06, 0.11, 0.0), Color(0.05, 0.06, 0.11, 0.9)])
+	fade.texture = UI.grad_tex([Color(0.05, 0.06, 0.11, 0.0), Color(0.05, 0.06, 0.11, 0.92)])
 	fade.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	fade.stretch_mode = TextureRect.STRETCH_SCALE
-	fade.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	fade.offset_top = -46; fade.offset_left = 6; fade.offset_right = -6; fade.offset_bottom = -6
+	fade.anchor_left = 0.535; fade.anchor_right = 1.0
+	fade.anchor_top = 1.0; fade.anchor_bottom = 1.0
+	fade.offset_left = 20; fade.offset_right = -44
+	fade.offset_top = -60; fade.offset_bottom = -22
 	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pc.add_child(fade)
+	add_child(fade)
 
 	if OS.has_environment("CP_TAB"):
 		tab = int(OS.get_environment("CP_TAB")) as Tab
@@ -252,6 +258,8 @@ func _char_card(ch: Dictionary) -> Control:
 		btn.pressed.connect(func() -> void:
 			Settings.char_id = str(ch.get("id", "bravo"))
 			Settings.save_cfg()
+			if bg:
+				bg.set_hero_char(Settings.char_id)
 			_refresh())
 
 	# full-card tier-tinted portrait (diagonal-ish tint via vertical gradient)
@@ -263,13 +271,26 @@ func _char_card(ch: Dictionary) -> Control:
 	port.offset_left = 3; port.offset_top = 3; port.offset_right = -3; port.offset_bottom = -3
 	port.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	btn.add_child(port)
-	# bold monogram watermark
-	var mono := UI.label(nm.substr(0, 1).to_upper(), 84, Color(1, 1, 1, 0.16))
-	mono.set_anchors_preset(Control.PRESET_CENTER)
-	mono.offset_left = -34; mono.offset_top = -70; mono.offset_right = 34
-	mono.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	mono.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	btn.add_child(mono)
+	# real rendered character portrait if we have one, else a bold monogram watermark
+	var pth := "res://assets/real/chars/portraits/%s.png" % str(ch.get("id", ""))
+	if ResourceLoader.exists(pth):
+		var pic := TextureRect.new()
+		pic.texture = load(pth)
+		pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		pic.set_anchors_preset(Control.PRESET_FULL_RECT)
+		pic.offset_left = 4; pic.offset_top = 2; pic.offset_right = -4; pic.offset_bottom = -26
+		pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if not owned:
+			pic.modulate = Color(0.5, 0.5, 0.55)
+		btn.add_child(pic)
+	else:
+		var mono := UI.label(nm.substr(0, 1).to_upper(), 84, Color(1, 1, 1, 0.16))
+		mono.set_anchors_preset(Control.PRESET_CENTER)
+		mono.offset_left = -34; mono.offset_top = -70; mono.offset_right = 34
+		mono.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		mono.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		btn.add_child(mono)
 	# dark scrim at the bottom for readable text
 	var scrim := TextureRect.new()
 	scrim.texture = UI.grad_tex([Color(0, 0, 0, 0.0), Color(0.02, 0.03, 0.06, 0.82)])

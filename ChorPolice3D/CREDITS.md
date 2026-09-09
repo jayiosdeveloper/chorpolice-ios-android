@@ -34,3 +34,8 @@ Both are public-domain (CC0) — no attribution required, listed here as courtes
 `assets/real/models/` (street_lamp_01, searchlights, jerrycans, ladders, crates, propane_tank, tool_chest, extinguisher) — CC0 Poly Haven.
 
 Green Hills nature (grass/ferns/flowers/boulders/moss rocks), forest ground textures & valley sky — CC0 Poly Haven. Terrain3D addon (MIT, TokisanGames) bundled for future terrain use.
+
+## FX & audio (from GodotFPS-Template by bukkbeek — MIT)
+`assets/real/fx/muzzle_flash.png`, `bullethole.png`, `bloodsplash.png` — VFX from EffectBlocks (bukkbeek).
+`assets/audio/rifle.wav, uzi.wav` (SMG), `reload.wav`, `swap.wav` (change_weapon), `click.wav` (no_bullets),
+`explosion.wav, rocket.wav` (standard_explosion) — SFX sourced from Pixabay via GodotFPS-Template (MIT).

@@ -24,6 +24,7 @@ var team := "player"               # "player" | "enemy"
 var is_bot := false
 var use_meshy := false
 var use_squad := false
+var char_id := ""
 var is_remote := false
 var max_health := 100.0
 var health := 100.0
@@ -96,6 +97,7 @@ func _ready() -> void:
 	model = HumanModel.new()
 	model.use_meshy = use_meshy
 	model.use_squad = use_squad
+	model.char_id = char_id
 	model.jacket = jacket
 	model.accent = accent
 	add_child(model)

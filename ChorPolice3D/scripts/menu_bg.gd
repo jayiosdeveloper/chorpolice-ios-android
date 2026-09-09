@@ -131,17 +131,18 @@ func _build_hero(w: float, h: float) -> void:
 	_hero_vp.add_child(_pivot)
 	_model = HumanModel.new()
 	_model.use_squad = true
+	_model.char_id = Settings.char_id
 	_lobby_gun = true
 	_model.jacket = Settings.skin_jacket if Settings.skin_jacket.a > 0.0 else Color(0.27, 0.55, 0.97)
 	_model.accent = Settings.skin_accent if Settings.skin_accent.a > 0.0 else Color(0.5, 0.95, 1.0)
 	_pivot.add_child(_model)
 	_pivot.rotation.y = PI + 0.35
-	if _lobby_gun:
-		_model.set_weapon(6)
-		if _model.anim and _model.anim.has_animation("fire"):
-			_model.anim.get_animation("fire").loop_mode = Animation.LOOP_LINEAR
-			_model.anim.play("fire")
-			_model.state = "fire"
+	# Showcase hero stands confidently with NO gun (idle). When an unarmed "idle"
+	# Mixamo clip is added it becomes a clean hands-down stance automatically.
+	_lobby_gun = false
+	_model.set_weapon(-1)                 # remove the auto-equipped gun
+	if _model.has_method("play"):
+		_model.play("idle")
 	# glowing disc under the feet
 	var disc := MeshInstance3D.new()
 	var cm := CylinderMesh.new()
@@ -224,6 +225,22 @@ func set_hero_colors(j: Color, a: Color) -> void:
 func set_hero_weapon(t: int) -> void:
 	if _model:
 		_model.set_weapon(t)
+
+## Swap the showcase character live (locker selection).
+func set_hero_char(id: String) -> void:
+	if not _pivot:
+		return
+	if _model and is_instance_valid(_model):
+		_model.queue_free()
+	_model = HumanModel.new()
+	_model.use_squad = true
+	_model.char_id = id
+	_model.jacket = Settings.skin_jacket if Settings.skin_jacket.a > 0.0 else Color(0.27, 0.55, 0.97)
+	_model.accent = Settings.skin_accent if Settings.skin_accent.a > 0.0 else Color(0.5, 0.95, 1.0)
+	_pivot.add_child(_model)
+	_model.set_weapon(-1)
+	if _model.has_method("play"):
+		_model.play("idle")
 
 func _process(delta: float) -> void:
 	_t += delta

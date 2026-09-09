@@ -10,6 +10,18 @@ const SCENE: PackedScene = preload("res://assets/models/human/soldier.glb")
 const MESHY_PATH := "res://assets/real/chars/hero2/hero2.glb"
 var use_meshy := false
 var use_squad := false
+var char_path := ""                    # explicit model override (Mixamo-rigged); shares squad anims
+var char_tex := ""                     # optional albedo texture for the chosen character
+var char_id := ""                      # picks a model from CHAR_MODELS
+var _char_is_squad := true
+var _use_mesh_scale := false
+
+# Selectable Mixamo-rigged characters (all share the black_squad animation set).
+const CHAR_MODELS := {
+	"bravo": {"path": SQUAD_PATH, "tex": ""},
+	"striker": {"path": "res://assets/real/chars/hero_new/hero_new.fbx", "tex": "res://assets/real/chars/hero_new/hero_new_albedo.png"},
+	"nova": {"path": "res://assets/real/chars/hero_f/hero_f.fbx", "tex": "res://assets/real/chars/hero_f/hero_f_albedo.png"},
+}
 const SQUAD_PATH := "res://assets/real/chars/black_squad/black_squad.fbx"
 var SQUAD_GUN_POS := Vector3(0.0, 0.0, 0.14)
 var SQUAD_GUN_ROT := Vector3(90, 0, 180)
@@ -60,11 +72,38 @@ var _chest: BoneAttachment3D
 
 func _ready() -> void:
 	var scene: PackedScene = SCENE
-	if use_squad and ResourceLoader.exists(SQUAD_PATH):
-		scene = load(SQUAD_PATH)
+	if use_squad:
+		# character model path: explicit char_path, else CHAR_MODELS[char_id], else CP_CHARPATH env,
+		# else black_squad. All are Mixamo-rigged (mixamorig_ bones) so they share the squad anim set.
+		var cp := char_path
+		if char_id == "":
+			char_id = OS.get_environment("CP_CHARID")
+		if cp == "" and char_id != "" and CHAR_MODELS.has(char_id):
+			cp = String(CHAR_MODELS[char_id]["path"])
+			char_tex = String(CHAR_MODELS[char_id].get("tex", ""))
+			_use_mesh_scale = bool(CHAR_MODELS[char_id].get("mesh_scale", false))
+		if cp == "":
+			cp = OS.get_environment("CP_CHARPATH")
+			if char_tex == "":
+				char_tex = OS.get_environment("CP_CHARTEX")
+			if OS.get_environment("CP_MESHSCALE") == "1":
+				_use_mesh_scale = true
+		if cp == "" or not ResourceLoader.exists(cp):
+			cp = SQUAD_PATH
+			char_tex = ""
+		_char_is_squad = (cp == SQUAD_PATH)
+		if ResourceLoader.exists(cp):
+			scene = load(cp)
 	elif use_meshy and ResourceLoader.exists(MESHY_PATH):
 		scene = load(MESHY_PATH)
 	_inst = scene.instantiate()
+	# safety: if a chosen character FBX has no mesh (e.g. an anim-only "Without Skin"
+	# export), fall back to the default soldier so nothing renders invisible.
+	if use_squad and _find_type(_inst, "MeshInstance3D") == null and ResourceLoader.exists(SQUAD_PATH):
+		_inst.free()
+		_inst = load(SQUAD_PATH).instantiate()
+		char_tex = ""
+		_char_is_squad = true
 	_inst.rotation.y = PI if (use_meshy or use_squad) else MODEL_YAW
 	if use_meshy:
 		_inst.scale = Vector3(1.18, 1.18, 1.18)
@@ -102,7 +141,13 @@ func _setup_materials(n: Node) -> void:
 					var ds := (m as StandardMaterial3D).duplicate() as StandardMaterial3D
 					ds.metallic = 0.0
 					ds.roughness = clampf(ds.roughness, 0.6, 1.0)
-					ds.albedo_color = Color(1.35, 1.35, 1.35)   # lift the dark tactical gear
+					if char_tex != "" and ResourceLoader.exists(char_tex):
+						ds.albedo_texture = load(char_tex)     # real Meshy colour texture
+						ds.albedo_color = Color(1.08, 1.08, 1.08)
+					elif _char_is_squad:
+						ds.albedo_color = Color(1.35, 1.35, 1.35)   # lift the dark tactical gear
+					else:
+						ds.albedo_color = Color(1.05, 1.05, 1.05)
 					mi.set_surface_override_material(s, ds)
 					continue
 				if m is StandardMaterial3D:
@@ -175,6 +220,13 @@ func _resolve_clips() -> void:
 
 ## Normalise a skinned FBX to a target height (its AABB is only known once posed).
 func _scale_to_height(h: float) -> void:
+	# Some FBX nest the skeleton under a scaled Armature, so bone-local rests lie about
+	# size — those characters set mesh_scale to measure the real mesh bounds instead.
+	if _use_mesh_scale:
+		var mh := _mesh_world_height()
+		if mh > 0.001:
+			_inst.scale *= (h / mh)
+		return
 	if not skeleton:
 		return
 	var lo := 1e20; var hi := -1e20
@@ -182,11 +234,23 @@ func _scale_to_height(h: float) -> void:
 		var y := skeleton.get_bone_global_rest(i).origin.y
 		lo = minf(lo, y); hi = maxf(hi, y)
 	var span := maxf(hi - lo, 0.01)
-	# bone rests are in the skeleton's local space; account for the model instance scale
 	var cur := span * _inst.scale.y
 	if cur > 0.001:
-		var k := h / cur
-		_inst.scale *= k
+		_inst.scale *= (h / cur)
+
+func _mesh_world_height() -> float:
+	var lo := 1e20; var hi := -1e20
+	var found := false
+	var stack: Array = [_inst]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is VisualInstance3D:
+			var a: AABB = (n as Node3D).global_transform * (n as VisualInstance3D).get_aabb()
+			if a.size.y > 0.0001:
+				lo = minf(lo, a.position.y); hi = maxf(hi, a.position.y + a.size.y); found = true
+		for c in n.get_children():
+			stack.append(c)
+	return (hi - lo) if found else 0.0
 
 ## Loads each Mixamo animation FBX and copies its single clip into our AnimationPlayer.
 func _merge_squad_anims() -> void:
@@ -215,22 +279,49 @@ func _merge_squad_anims() -> void:
 	anim.add_animation_library("", lib)
 	_clip_idle = "idle"; _clip_walk = "walk"; _clip_run = "run"
 
+## Bone-name key that ignores rig-specific naming (mixamorig_ prefix, underscores, the
+## Spine1 vs Spine01 style, case) so a Mixamo clip retargets onto any humanoid skeleton.
+static func _bnorm(s: String) -> String:
+	return s.to_lower().replace("mixamorig_", "").replace("mixamorig:", "").replace("_", "").replace("0", "")
+
+## Rewrite each animation track to point at THIS character's skeleton + bone names, so
+## the shared Mixamo clips drive the loaded rig regardless of its bone naming (Mixamo,
+## Meshy, etc.) and node nesting (Skeleton3D vs Armature/Skeleton3D).
+func _retarget(a: Animation) -> void:
+	if not skeleton or not anim:
+		return
+	var base: Node = anim.get_node_or_null(anim.root_node)
+	if base == null:
+		base = anim.get_parent()
+	var rel := String(base.get_path_to(skeleton))
+	var bmap := {}
+	for i in skeleton.get_bone_count():
+		bmap[_bnorm(skeleton.get_bone_name(i))] = skeleton.get_bone_name(i)
+	for ti in a.get_track_count():
+		var p := String(a.track_get_path(ti))
+		var colon := p.rfind(":")
+		if colon < 0:
+			continue
+		var key := _bnorm(p.substr(colon + 1))
+		if bmap.has(key):
+			a.track_set_path(ti, NodePath(rel + ":" + String(bmap[key])))
+
 ## Removes the root (Hips) horizontal drift from a clip so it animates in place
 ## (Mixamo clips downloaded without "In Place" otherwise slide forward then snap back).
 func _make_in_place(a: Animation) -> void:
+	# Remove the Hips POSITION track entirely. Mixamo clips store hip translation in the
+	# SOURCE character's scale; keeping it breaks other Mixamo characters (huge offset →
+	# model flies off screen). Dropping it leaves a pure-rotation clip that retargets onto
+	# ANY Mixamo skeleton at any scale, staying grounded at its own rest hip position.
+	var to_remove: Array[int] = []
 	for ti in a.get_track_count():
 		if a.track_get_type(ti) != Animation.TYPE_POSITION_3D:
 			continue
-		var path := String(a.track_get_path(ti))
-		if not path.to_lower().contains("hips"):
-			continue
-		var kc := a.track_get_key_count(ti)
-		if kc == 0:
-			continue
-		var first: Vector3 = a.track_get_key_value(ti, 0)
-		for ki in kc:
-			var v: Vector3 = a.track_get_key_value(ti, ki)
-			a.track_set_key_value(ti, ki, Vector3(first.x, v.y, first.z))
+		if String(a.track_get_path(ti)).to_lower().contains("hips"):
+			to_remove.append(ti)
+	to_remove.reverse()
+	for ti in to_remove:
+		a.remove_track(ti)
 
 func _setup_rig() -> void:
 	rig = AimRig.new()
@@ -332,6 +423,13 @@ func set_lean(l: float) -> void:
 # MARK: weapons
 
 func set_weapon(t: int) -> void:
+	if t < 0:                       # no weapon (empty-handed showcase / lobby stance)
+		gun_type = -1
+		if gun:
+			gun.queue_free()
+		gun = null
+		muzzle = null
+		return
 	if use_squad:
 		gun_type = t
 		if gun:
@@ -525,7 +623,7 @@ func die() -> void:
 func revive() -> void:
 	dead = false
 	if _death_tw: _death_tw.kill()
-	_inst.rotation = Vector3(0, PI if use_meshy else MODEL_YAW, 0)
+	_inst.rotation = Vector3(0, PI if (use_meshy or use_squad) else MODEL_YAW, 0)
 	_inst.position = _base_pos
 	if _ik_r: _ik_r.start()
 	if _ik_l: _ik_l.start()

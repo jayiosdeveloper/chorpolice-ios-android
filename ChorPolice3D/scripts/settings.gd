@@ -45,11 +45,11 @@ const ARMY := [
 # Selectable characters (locker). `owned` ones are playable now; the rest are slots to
 # fill as rigged models are added — map each id → model in human_model.gd's char loader.
 const CHARACTERS := [
-	{"id": "bravo", "name": "Bravo", "tag": "Assault", "tier": "EPIC", "col": Color(1.0, 0.55, 0.15), "owned": true},
-	{"id": "ghost", "name": "Ghost", "tag": "Recon", "tier": "RARE", "col": Color(0.35, 0.7, 1.0), "owned": false},
-	{"id": "vector", "name": "Vector", "tag": "Support", "tier": "RARE", "col": Color(0.4, 0.9, 0.7), "owned": false},
+	{"id": "bravo", "name": "Ghost", "tag": "Assault", "tier": "EPIC", "col": Color(1.0, 0.55, 0.15), "owned": true},
+	{"id": "striker", "name": "Ace", "tag": "Striker", "tier": "RARE", "col": Color(0.35, 0.7, 1.0), "owned": true},
+	{"id": "nova", "name": "Nova", "tag": "Sniper", "tier": "LEGENDARY", "col": Color(0.85, 0.4, 0.9), "owned": true},
 	{"id": "blaze", "name": "Blaze", "tag": "Heavy", "tier": "EPIC", "col": Color(1.0, 0.35, 0.35), "owned": false},
-	{"id": "nova", "name": "Nova", "tag": "Sniper", "tier": "LEGENDARY", "col": Color(0.75, 0.5, 1.0), "owned": false},
+	{"id": "vector", "name": "Vector", "tag": "Support", "tier": "RARE", "col": Color(0.4, 0.9, 0.7), "owned": false},
 	{"id": "raptor", "name": "Raptor", "tag": "Scout", "tier": "COMMON", "col": Color(0.6, 0.66, 0.78), "owned": false},
 ]
 

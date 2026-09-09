@@ -169,6 +169,7 @@ func _ready() -> void:
 
 	player = Fighter.new()
 	player.use_squad = true
+	player.char_id = Settings.char_id
 	var sk := _local_skin()
 	player.skin_jacket = sk[0]
 	player.skin_accent = sk[1]
@@ -798,19 +799,26 @@ func _assist_target(deg: float, max_d: float) -> Fighter:
 ## Direction for the next shot: the assisted target if one sits near the crosshair,
 ## else the point the camera looks at (so bullets land on the crosshair).
 func _shoot_dir() -> Vector3:
-	var origin := player.eye_position()
-	var base := _cam_dir()
 	var muzzle := player.muzzle_position()
 	var space := get_world_3d().direct_space_state
-	var best := _assist_target(AIM_ASSIST_DEG, 45.0)
-	if best:
-		return ((best.global_position + Vector3(0, 1.0, 0)) - muzzle).normalized()
-	var far := origin + base * 80.0
-	var q2 := PhysicsRayQueryParameters3D.create(origin, far, 1)
+	# Aim exactly where the on-screen crosshair points: cast from the CAMERA through
+	# the screen centre (the camera is offset over-the-shoulder, so using the camera
+	# ray — not the player's eye — is what makes bullets land on the crosshair).
+	var sc := get_viewport().get_visible_rect().size * 0.5
+	var ro := cam.project_ray_origin(sc)
+	var rn := cam.project_ray_normal(sc)
+	var far := ro + rn * 200.0
+	var q2 := PhysicsRayQueryParameters3D.create(ro, far, 1)
 	var hit := space.intersect_ray(q2)
 	var target: Vector3 = hit["position"] if hit else far
-	if target.distance_to(muzzle) < 1.0:
-		return base
+	# tight aim-assist: only snap when an enemy sits very near the crosshair
+	var best := _assist_target(AIM_ASSIST_DEG, 45.0)
+	if best:
+		var bp: Vector3 = best.global_position + Vector3(0, 1.0, 0)
+		if (bp - ro).normalized().dot(rn) > cos(deg_to_rad(6.0)):
+			target = bp
+	if muzzle.distance_to(target) < 1.0:
+		return rn
 	return (target - muzzle).normalized()
 
 static func _spread(dir: Vector3, amount: float) -> Vector3:
@@ -881,24 +889,28 @@ func _spawn_rocket(pos: Vector3, dir: Vector3, from_player: bool, owner_id := 0)
 	add_child(r)
 	_muzzle_flash(pos, Color(1, 0.7, 0.3))
 
+## Each weapon gets a distinct fire sound — real SMG/pistol/explosion bases, tuned per
+## gun by pitch + volume so an UZI, rifle, MP5, shotgun, sniper, magnum all sound different.
 func _play_fire_sound() -> void:
 	match current_weapon:
-		Weapons.UZI, Weapons.MP5:
-			Audio.play("uzi")
+		Weapons.UZI:
+			Audio.play("rifle", -2.0, 1.30)      # fast, tinny SMG
+		Weapons.MP5:
+			Audio.play("rifle", -1.0, 1.14)      # slightly deeper SMG
 		Weapons.SHOTGUN:
-			Audio.play("shotgun")
+			Audio.play("shotgun", 1.5, 0.9)      # deep boom
 		Weapons.SNIPER:
-			Audio.play("sniper")
+			Audio.play("sniper", 2.0, 0.85)      # big, slow crack
 		Weapons.MAGNUM:
-			Audio.play("sniper", -3.0)
+			Audio.play("sniper", 0.0, 1.28)      # sharp punchy handgun
 		Weapons.FLAMER:
 			flame_count += 1
 			if flame_count % 3 == 0:
 				Audio.play("flame")
 		Weapons.ROCKET:
-			Audio.play("rocket")
+			Audio.play("rocket")                 # real explosion launch
 		_:
-			Audio.play("rifle")
+			Audio.play("rifle", 0.0, 1.0)        # M4 rifle
 
 ## Called by Bullet3D when its ray hits something.
 func bullet_hit(b: Bullet3D, hit: Dictionary) -> void:
@@ -920,6 +932,46 @@ func bullet_hit(b: Bullet3D, hit: Dictionary) -> void:
 			damage_local_player(b.dmg, b.owner_id, pos)
 	elif not b.is_flame:
 		spawn_spark(pos)
+		if hit.has("normal"):
+			spawn_bullet_hole(pos, hit["normal"])
+
+# MARK: bullet decals + muzzle textures
+
+static var _muzzle_tex: Texture2D
+static var _hole_tex: Texture2D
+
+func _muzzle_texture() -> Texture2D:
+	if _muzzle_tex == null:
+		_muzzle_tex = load("res://assets/real/fx/muzzle_flash.png")
+	return _muzzle_tex
+
+## A bullet hole stuck on a wall at the hit point, facing along the surface normal,
+## fading out after a few seconds. Cheap unshaded quad (works on the Mobile renderer).
+func spawn_bullet_hole(pos: Vector3, normal: Vector3) -> void:
+	if _hole_tex == null:
+		_hole_tex = load("res://assets/real/fx/bullethole.png")
+	if _hole_tex == null:
+		return
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_texture = _hole_tex
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var qm := QuadMesh.new()
+	qm.size = Vector2(0.16, 0.16)
+	qm.material = m
+	var q := MeshInstance3D.new()
+	q.mesh = qm
+	q.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(q)
+	q.global_position = pos + normal * 0.02
+	var up := Vector3.UP if absf(normal.dot(Vector3.UP)) < 0.98 else Vector3.RIGHT
+	q.look_at(q.global_position + normal, up)
+	q.rotate_object_local(Vector3(0, 0, 1), randf() * TAU)
+	var tw := create_tween()
+	tw.tween_interval(5.0)
+	tw.tween_property(m, "albedo_color:a", 0.0, 1.0)
+	tw.tween_callback(q.queue_free)
 
 # MARK: grenades
 
@@ -1115,24 +1167,21 @@ func _muzzle_flash(pos: Vector3, col: Color) -> void:
 	fmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	fmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	fmat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	fmat.albedo_color = Color(1.0, 0.85, 0.45, 0.95)
+	fmat.albedo_color = Color(1.0, 0.9, 0.6, 1.0)
+	fmat.albedo_texture = _muzzle_texture()
 	fmat.emission_enabled = true
-	fmat.emission = Color(1.0, 0.7, 0.3)
-	fmat.emission_energy_multiplier = 6.0
+	fmat.emission = Color(1.0, 0.75, 0.35)
+	fmat.emission_energy_multiplier = 4.0
 	fmat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	for i in 2:
-		var q := MeshInstance3D.new()
-		var qm := QuadMesh.new()
-		qm.size = Vector2(0.55, 0.18) if i == 0 else Vector2(0.18, 0.55)
-		qm.material = fmat
-		q.mesh = qm
-		q.rotation.z = randf() * TAU
-		flash.add_child(q)
-	var star := MeshInstance3D.new()
-	var scm := SphereMesh.new(); scm.radius = 0.13; scm.height = 0.26; scm.radial_segments = 8; scm.rings = 4
-	scm.material = fmat
-	star.mesh = scm
-	flash.add_child(star)
+	# a real muzzle-flash sprite (billboarded quad), random roll each shot
+	var q := MeshInstance3D.new()
+	var qm := QuadMesh.new()
+	qm.size = Vector2(0.62, 0.62)
+	qm.material = fmat
+	q.mesh = qm
+	q.rotation.z = randf() * TAU
+	q.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	flash.add_child(q)
 	var light := OmniLight3D.new()
 	light.light_color = Color(1.0, 0.75, 0.4)
 	light.light_energy = 5.0
@@ -1298,6 +1347,7 @@ func _on_net_message(sender: int, msg: Dictionary) -> void:
 func _make_remote(sender: int, s: Dictionary) -> void:
 	var r := Fighter.new()
 	r.is_remote = true
+	r.use_squad = true                    # remote players use the real rigged character too
 	r.skin_jacket = Color(float(s.get("jr", 0.3)), float(s.get("jg", 0.5)), float(s.get("jb", 0.9)))
 	r.skin_accent = Color(float(s.get("ar", 0.6)), float(s.get("ag", 0.9)), float(s.get("ab", 1.0)))
 	r.name_text = Net.name_of(sender)
@@ -1637,6 +1687,7 @@ func _spawn_bot() -> void:
 
 	var b := Fighter.new()
 	b.is_bot = true
+	b.use_squad = true                    # enemies use the real rigged character (proper hands/gun)
 	b.team = "enemy"
 	b.name_text = nm
 	b.position = pos
