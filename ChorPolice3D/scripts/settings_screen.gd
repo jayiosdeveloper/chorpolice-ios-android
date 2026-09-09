@@ -121,7 +121,8 @@ func _ready() -> void:
 	pc.add_child(sc)
 	content = VBoxContainer.new()
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# NOTE: do NOT set vertical EXPAND_FILL — it clamps content to the ScrollContainer
+	# height and kills scrolling. Content must keep its natural (tall) minimum size.
 	content.add_theme_constant_override("separation", 12)
 	sc.add_child(content)
 	# soft bottom fade — added to the screen (NOT inside the PanelContainer) so it can't
@@ -433,6 +434,12 @@ func _build_controls() -> void:
 	content.add_child(UI.heading("Aim sensitivity"))
 	_seg(["Low", "Normal", "High"], [0, 1, 2], Settings.aim_sens, func(v: int) -> void:
 		Settings.aim_sens = v
+		Settings.save_cfg()
+		_refresh())
+	_switch("Gyro aim", "Tilt the phone to fine-aim (like PUBG / Free Fire)", "gyro_aim")
+	content.add_child(UI.heading("Gyro strength"))
+	_seg(["Low", "Medium", "High"], [0.6, 1.0, 1.6], Settings.gyro_sens, func(v: float) -> void:
+		Settings.gyro_sens = v
 		Settings.save_cfg()
 		_refresh())
 	_hint("Right side: drag to look • FIRE buttons on both sides • JUMP: hold in the air = jetpack • R: reload")

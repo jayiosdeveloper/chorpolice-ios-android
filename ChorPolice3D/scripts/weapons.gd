@@ -16,9 +16,9 @@ const ROCKET := 8
 
 static func data(t: int) -> Dictionary:
 	match t:
-		UZI:     return {"name": "UZI", "interval": 0.07, "dmg": 7.0, "speed": 900.0, "pellets": 1, "spread": 0.05, "life": 1.5, "ammo": 40, "muzzle": 46.0, "special": "bullet", "grips": [22.0, 33.0]}
+		UZI:     return {"name": "VECTOR", "interval": 0.07, "dmg": 7.0, "speed": 900.0, "pellets": 1, "spread": 0.05, "life": 1.5, "ammo": 40, "muzzle": 46.0, "special": "bullet", "grips": [22.0, 33.0]}
 		SHOTGUN: return {"name": "SHOTGUN", "interval": 0.6, "dmg": 9.0, "speed": 800.0, "pellets": 5, "spread": 0.18, "life": 1.5, "ammo": 12, "muzzle": 54.0, "special": "bullet", "grips": [15.0, 31.0]}
-		SNIPER:  return {"name": "M14", "interval": 0.95, "dmg": 45.0, "speed": 1450.0, "pellets": 1, "spread": 0.0, "life": 1.5, "ammo": 8, "muzzle": 64.0, "special": "bullet", "grips": [13.0, 33.0]}
+		SNIPER:  return {"name": "SCAR-H", "interval": 0.95, "dmg": 45.0, "speed": 1450.0, "pellets": 1, "spread": 0.0, "life": 1.5, "ammo": 8, "muzzle": 64.0, "special": "bullet", "grips": [13.0, 33.0]}
 		MAGNUM:  return {"name": "MAGNUM", "interval": 0.45, "dmg": 28.0, "speed": 1150.0, "pellets": 1, "spread": 0.01, "life": 1.5, "ammo": 12, "muzzle": 44.0, "special": "bullet", "grips": [13.0, 13.0]}
 		MP5:     return {"name": "MP5", "interval": 0.085, "dmg": 8.0, "speed": 920.0, "pellets": 1, "spread": 0.04, "life": 1.5, "ammo": 45, "muzzle": 47.0, "special": "bullet", "grips": [20.0, 37.0]}
 		AK47:    return {"name": "AK-47", "interval": 0.16, "dmg": 14.0, "speed": 950.0, "pellets": 1, "spread": 0.03, "life": 1.5, "ammo": 35, "muzzle": 56.0, "special": "bullet", "grips": [20.0, 38.0]}

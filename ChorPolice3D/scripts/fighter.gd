@@ -61,6 +61,7 @@ var los := false
 
 var model: HumanModel
 var jet: CPUParticles3D
+var _jet_light: OmniLight3D      # warm glow while thrusting
 var hp_bar: MeshInstance3D
 var hp_bg: MeshInstance3D
 var name_label: Label3D
@@ -119,32 +120,48 @@ func _setup_colors() -> void:
 func _build_jet() -> void:
 	jet = CPUParticles3D.new()
 	jet.emitting = false
-	jet.amount = 40
-	jet.lifetime = 0.35
+	jet.amount = 90
+	jet.lifetime = 0.42
 	jet.local_coords = false
+	jet.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	jet.emission_sphere_radius = 0.07
 	jet.direction = Vector3(0, -1, 0)
-	jet.spread = 14.0
-	jet.initial_velocity_min = 5.0
-	jet.initial_velocity_max = 8.0
-	jet.gravity = Vector3.ZERO
-	jet.scale_amount_min = 0.5
+	jet.spread = 11.0
+	jet.initial_velocity_min = 6.0
+	jet.initial_velocity_max = 9.5
+	jet.gravity = Vector3(0, 2.0, 0)           # hot gas curls back up as it fades
+	jet.angular_velocity_min = -180.0
+	jet.angular_velocity_max = 180.0
+	jet.scale_amount_min = 0.55
 	jet.scale_amount_max = 1.0
-	var m := SphereMesh.new()
-	m.radius = 0.09
-	m.height = 0.18
-	m.radial_segments = 6
-	m.rings = 3
+	var sc := Curve.new()                       # flare out, then burn away
+	sc.add_point(Vector2(0.0, 0.6)); sc.add_point(Vector2(0.25, 1.0)); sc.add_point(Vector2(1.0, 0.15))
+	jet.scale_amount_curve = sc
+	# real flame sprite on an additive billboard instead of shaded blobs
+	var q := QuadMesh.new()
+	q.size = Vector2(0.44, 0.44)
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = Color(1.0, 0.6, 0.2)
-	mat.emission_enabled = true
-	mat.emission = Color(1.0, 0.5, 0.1)
-	mat.emission_energy_multiplier = 2.0
-	m.material = mat
-	jet.mesh = m
-	jet.color_ramp = _ramp([Color(1, 0.95, 0.6, 1), Color(1, 0.45, 0.1, 0.8), Color(0.4, 0.4, 0.4, 0.0)])
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	mat.vertex_color_use_as_albedo = true
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.albedo_texture = load("res://assets/real/fx/flame_soft.png")
+	q.material = mat
+	jet.mesh = q
+	jet.color_ramp = _ramp([Color(1.0, 0.98, 0.75, 1.0), Color(1.0, 0.72, 0.2, 1.0), Color(1.0, 0.35, 0.05, 0.7), Color(0.25, 0.22, 0.2, 0.0)])
 	jet.position = Vector3(0, 1.05, 0.3)
 	add_child(jet)
+	# warm light thrown on the body / ground while thrusting
+	_jet_light = OmniLight3D.new()
+	_jet_light.light_color = Color(1.0, 0.6, 0.25)
+	_jet_light.light_energy = 3.5
+	_jet_light.omni_range = 4.0
+	_jet_light.shadow_enabled = false
+	_jet_light.visible = false
+	_jet_light.position = Vector3(0, 0.75, 0.3)
+	add_child(_jet_light)
 
 static func _ramp(cols: Array) -> Gradient:
 	var g := Gradient.new()
@@ -202,6 +219,8 @@ func set_thrust(on: bool) -> void:
 	jetting = on
 	if jet:
 		jet.emitting = on
+		if _jet_light:
+			_jet_light.visible = on
 
 func set_aim(yaw: float, pitch := 0.0) -> void:
 	aim_yaw = yaw
@@ -317,7 +336,7 @@ func _set_body_visible(v: bool) -> void:
 		else:
 			model.die()
 			var tw := create_tween()
-			tw.tween_interval(1.6)
+			tw.tween_interval(3.0)
 			tw.tween_callback(func() -> void:
 				if dead and is_instance_valid(model):
 					model.visible = false)

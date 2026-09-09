@@ -14,7 +14,7 @@ func _ready() -> void:
 
 	bg = MenuBg.new()
 	add_child(bg)
-	bg.set_hero(0.5, 0.6, 0.0, 0.88)
+	bg.set_hero(0.5, 0.92, 0.0, 0.9)
 	Audio.play_track("menu")
 
 	var vp := get_viewport().get_visible_rect().size
@@ -56,7 +56,7 @@ func _ready() -> void:
 
 	# hero fades up first
 	var th := create_tween()
-	th.tween_method(func(a: float) -> void: bg.set_hero(0.5, 0.6, a, 0.88), 0.0, 1.0, 0.9).set_trans(Tween.TRANS_SINE)
+	th.tween_method(func(a: float) -> void: bg.set_hero(0.5, 0.92, a, 0.9), 0.0, 1.0, 0.9).set_trans(Tween.TRANS_SINE)
 	# logo springs in
 	logo.scale = Vector2(0.25, 0.25)
 	var t1 := create_tween().set_parallel()

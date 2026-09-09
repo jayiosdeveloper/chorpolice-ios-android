@@ -11,6 +11,7 @@ var taken := false
 var _root: Node3D
 var _base_y := 0.0
 var _t := 0.0
+var _ring: MeshInstance3D          # pulsing highlight ring under a weapon drop
 
 func _ready() -> void:
 	collision_layer = 32
@@ -42,7 +43,7 @@ func _ready() -> void:
 		_:
 			col = Color(0.95, 0.6, 0.18)
 			label = String(Weapons.data(weapon_type)["name"])
-			model_path = "res://assets/real/models/old_military_crate/old_military_crate_1k.gltf"
+			model_path = ""          # weapons show the actual gun (below), not a crate
 	# a real crate/ammo-box model (falls back to a glowing box if the model is missing)
 	var placed := false
 	if ResourceLoader.exists(model_path):
@@ -54,6 +55,36 @@ func _ready() -> void:
 			inst.scale = Vector3(s, s, s)
 			inst.position = -ab.position * s      # sit centred on the disc
 		placed = true
+	if kind != "health" and kind != "nades":       # the real gun: centred, tilted, spinning, glowing
+		var pivot := Node3D.new()
+		pivot.rotation.z = 0.32                    # jaunty tilt so it reads as a dropped weapon
+		pivot.scale = Vector3(1.15, 1.15, 1.15)
+		_root.add_child(pivot)
+		var g := GunModel.build(weapon_type)
+		pivot.add_child(g)
+		var gb := _merged_aabb(g)
+		if gb.size.length() > 0.001:
+			g.position = -(gb.position + gb.size * 0.5)   # spin about the gun's centre
+		_base_y = 0.62
+		placed = true
+		var ring := MeshInstance3D.new()
+		var tm := TorusMesh.new()
+		tm.inner_radius = 0.42
+		tm.outer_radius = 0.54
+		var rm := StandardMaterial3D.new()
+		rm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		rm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		rm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		rm.albedo_color = Color(col.r, col.g, col.b, 0.9)
+		rm.emission_enabled = true
+		rm.emission = col
+		rm.emission_energy_multiplier = 2.5
+		tm.material = rm
+		ring.mesh = tm
+		ring.position = Vector3(0, 0.03, 0)
+		ring.scale = Vector3(1, 0.22, 1)
+		add_child(ring)                            # on the Area (not _root) so it doesn't bob
+		_ring = ring
 	if not placed:
 		var mi := MeshInstance3D.new()
 		var b := BoxMesh.new()
@@ -89,8 +120,8 @@ func _ready() -> void:
 
 	var light := OmniLight3D.new()
 	light.light_color = col
-	light.light_energy = 0.8
-	light.omni_range = 2.5
+	light.light_energy = 0.8 if (kind == "health" or kind == "nades") else 1.6
+	light.omni_range = 2.5 if (kind == "health" or kind == "nades") else 3.2
 	light.shadow_enabled = false
 	light.position = Vector3(0, 0.6, 0)
 	add_child(light)
@@ -101,6 +132,10 @@ func _process(delta: float) -> void:
 	_t += delta
 	_root.rotation.y += delta * 1.4
 	_root.position.y = _base_y + sin(_t * 2.2) * 0.12
+	if _ring:
+		var k := 1.0 + 0.07 * sin(_t * 3.0)
+		_ring.scale = Vector3(k, 0.22, k)
+		_ring.rotation.y -= delta * 0.8
 
 func _on_body(body: Node) -> void:
 	if taken or not body.is_in_group("player"):

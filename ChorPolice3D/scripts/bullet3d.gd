@@ -16,6 +16,7 @@ var _age := 0.0
 
 static var _tracer_mesh: BoxMesh
 static var _flame_mesh: SphereMesh
+static var _round_mesh: Mesh            # real brass round (assets/real/guns/bullet.res)
 
 func _ready() -> void:
 	_mi = MeshInstance3D.new()
@@ -36,18 +37,32 @@ func _ready() -> void:
 		m.emission_energy_multiplier = 2.0
 		_mi.material_override = m
 	else:
+		# a real brass round at the front + a slim hot streak trailing behind it
+		if not _round_mesh and ResourceLoader.exists("res://assets/real/guns/bullet.res"):
+			_round_mesh = load("res://assets/real/guns/bullet.res")
 		if not _tracer_mesh:
 			_tracer_mesh = BoxMesh.new()
-			_tracer_mesh.size = Vector3(0.05, 0.05, 1.7)
-		_mi.mesh = _tracer_mesh
+			_tracer_mesh.size = Vector3(0.022, 0.022, 1.3)
 		var m := StandardMaterial3D.new()
 		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		m.albedo_color = Color(1.0, 0.9, 0.5) if from_player else Color(1.0, 0.55, 0.35)
+		m.albedo_color = Color(1.0, 0.9, 0.5, 0.6) if from_player else Color(1.0, 0.55, 0.35, 0.6)
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		m.emission_enabled = true
-		m.emission = m.albedo_color
-		m.emission_energy_multiplier = 5.0
+		m.emission = Color(m.albedo_color.r, m.albedo_color.g, m.albedo_color.b)
+		m.emission_energy_multiplier = 4.0
 		m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-		_mi.material_override = m
+		if _round_mesh:
+			_mi.mesh = _round_mesh
+			_mi.scale = Vector3(0.25, 0.25, 0.25)       # ~15 cm round, readable in flight
+			var streak := MeshInstance3D.new()
+			streak.mesh = _tracer_mesh
+			streak.material_override = m
+			streak.position = Vector3(0, 0, 0.72)        # trails behind (forward is -Z)
+			streak.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(streak)
+		else:
+			_mi.mesh = _tracer_mesh
+			_mi.material_override = m
 	_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_mi)
 	_orient()

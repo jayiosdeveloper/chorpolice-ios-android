@@ -15,6 +15,7 @@ var char_tex := ""                     # optional albedo texture for the chosen 
 var char_id := ""                      # picks a model from CHAR_MODELS
 var _char_is_squad := true
 var _use_mesh_scale := false
+var _hide_meshes: Array = []           # mesh-name substrings to hide (e.g. a model's built-in gun)
 
 # Selectable Mixamo-rigged characters (all share the black_squad animation set).
 const CHAR_MODELS := {
@@ -69,6 +70,11 @@ var _ads := 0.0
 var ads := false
 var _reload_tw: Tween
 var _chest: BoneAttachment3D
+var aim_dir := Vector3.ZERO             # world direction the gun must point (set by the game each frame)
+
+## Point the gun along a world direction (muzzle -> crosshair target). Zero = body forward + pitch.
+func set_aim_dir(d: Vector3) -> void:
+	aim_dir = d
 
 func _ready() -> void:
 	var scene: PackedScene = SCENE
@@ -82,6 +88,7 @@ func _ready() -> void:
 			cp = String(CHAR_MODELS[char_id]["path"])
 			char_tex = String(CHAR_MODELS[char_id].get("tex", ""))
 			_use_mesh_scale = bool(CHAR_MODELS[char_id].get("mesh_scale", false))
+			_hide_meshes = CHAR_MODELS[char_id].get("hide", [])
 		if cp == "":
 			cp = OS.get_environment("CP_CHARPATH")
 			if char_tex == "":
@@ -108,6 +115,8 @@ func _ready() -> void:
 	if use_meshy:
 		_inst.scale = Vector3(1.18, 1.18, 1.18)
 	add_child(_inst)
+	if not _hide_meshes.is_empty():
+		_apply_hide(_inst)
 	_base_pos = _inst.position
 	anim = _find_type(_inst, "AnimationPlayer") as AnimationPlayer
 	skeleton = _find_type(_inst, "Skeleton3D") as Skeleton3D
@@ -223,9 +232,14 @@ func _scale_to_height(h: float) -> void:
 	# Some FBX nest the skeleton under a scaled Armature, so bone-local rests lie about
 	# size — those characters set mesh_scale to measure the real mesh bounds instead.
 	if _use_mesh_scale:
+		# skinned-mesh world bounds are only valid once the node is in-tree and posed;
+		# wait a frame so get_aabb()/global_transform return real values (not identity).
+		if is_inside_tree():
+			await get_tree().process_frame
 		var mh := _mesh_world_height()
 		if mh > 0.001:
 			_inst.scale *= (h / mh)
+		_inst.position.y -= _mesh_world_bottom()   # ground the feet to y=0
 		return
 	if not skeleton:
 		return
@@ -252,6 +266,31 @@ func _mesh_world_height() -> float:
 			stack.append(c)
 	return (hi - lo) if found else 0.0
 
+## Hide mesh parts whose name contains any of the _hide_meshes substrings (built-in gun etc.).
+func _apply_hide(n: Node) -> void:
+	if n is MeshInstance3D:
+		var nm := n.name.to_lower()
+		for p in _hide_meshes:
+			if nm.contains(String(p)):
+				(n as MeshInstance3D).visible = false
+				break
+	for c in n.get_children():
+		_apply_hide(c)
+
+## Lowest mesh point in world Y (to sit the feet on the ground).
+func _mesh_world_bottom() -> float:
+	var lo := 1e20
+	var stack: Array = [_inst]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is VisualInstance3D:
+			var a: AABB = (n as Node3D).global_transform * (n as VisualInstance3D).get_aabb()
+			if a.size.y > 0.0001:
+				lo = minf(lo, a.position.y)
+		for c in n.get_children():
+			stack.append(c)
+	return 0.0 if lo > 1e19 else lo
+
 ## Loads each Mixamo animation FBX and copies its single clip into our AnimationPlayer.
 func _merge_squad_anims() -> void:
 	if not anim:
@@ -269,6 +308,7 @@ func _merge_squad_anims() -> void:
 				if a:
 					var dup: Animation = a.duplicate()
 					_make_in_place(dup)
+					_retarget(dup)   # remap node path + bone names onto THIS rig (Mixamo/Meshy/GLB nesting)
 					if state in ["idle", "walk", "run", "fall"]:
 						dup.loop_mode = Animation.LOOP_LINEAR
 					lib.add_animation(state, dup)
@@ -327,16 +367,27 @@ func _setup_rig() -> void:
 	rig = AimRig.new()
 	skeleton.add_child(rig)
 	if use_squad:
-		# rifle animations already pose the arms — read the right-hand bone and hang a
-		# REAL-SCALE gun off it (bone scale is tiny/cm, so we strip it every frame)
-		_hand_bone = BoneAttachment3D.new()
-		_hand_bone.bone_name = _bone("RightHand")
-		skeleton.add_child(_hand_bone)
+		# The gun hangs from a chest pivot that is pointed along the AIM direction every
+		# frame (so the barrel goes where the crosshair is), and both hands are IK-pulled
+		# onto the gun's grip / foregrip markers — the rifle clips only drive body + legs.
+		_chest = BoneAttachment3D.new()
+		_chest.bone_name = _bone("Spine2")
+		skeleton.add_child(_chest)
 		gun_hold = Node3D.new()
 		gun_hold.top_level = true
 		add_child(gun_hold)
 		_gun_mount = Node3D.new()
 		gun_hold.add_child(_gun_mount)
+		_hand_r = Node3D.new()
+		_hand_l = Node3D.new()
+		add_child(_hand_r); add_child(_hand_l)
+		_hand_r.top_level = true; _hand_l.top_level = true
+		_ik_r = _make_ik("RightArm", "RightHand", _hand_r, Vector3(60, -35, 110))
+		_ik_l = _make_ik("LeftArm", "LeftHand", _hand_l, Vector3(-60, -35, 110))
+		# keep the clip's natural hand orientation (only the wrist is pulled to the gun)
+		_ik_r.override_tip_basis = false
+		_ik_l.override_tip_basis = false
+		_ik_r.stop(); _ik_l.stop()
 		return
 
 	_chest = BoneAttachment3D.new()
@@ -372,23 +423,36 @@ func _process(_delta: float) -> void:
 	if use_squad:
 		_ads = move_toward(_ads, 1.0 if ads else 0.0, _delta * 5.0)
 		_fire_t = maxf(0.0, _fire_t - _delta)
-		if gun_hold and _hand_bone and gun:
-			var ht := _hand_bone.global_transform
-			gun_hold.global_transform = Transform3D(ht.basis.orthonormalized(), ht.origin)
-			var _gr := SQUAD_GUN_ROT
-			var _ov := OS.get_environment("CP_GUNROT")
-			if _ov != "":
-				var _p := _ov.split(",")
-				if _p.size() == 3:
-					_gr = Vector3(float(_p[0]), float(_p[1]), float(_p[2]))
-			_gun_mount.rotation_degrees = _gr
-			var _gp := SQUAD_GUN_POS
-			var _po := OS.get_environment("CP_GUNPOS")
-			if _po != "":
-				var _pp := _po.split(",")
-				if _pp.size() == 3:
-					_gp = Vector3(float(_pp[0]), float(_pp[1]), float(_pp[2]))
-			_gun_mount.position = _gp
+		var have_gun := gun_hold != null and _chest != null and gun != null and not dead
+		if have_gun:
+			# squad models are yawed 180°, so their forward / right are the node's -Z / -X
+			var fwd := (-global_transform.basis.z).normalized()
+			var rgt := (-global_transform.basis.x).normalized()
+			var dir := aim_dir
+			if dir.length_squared() < 0.5:
+				dir = Basis(rgt, _pitch) * fwd            # no explicit aim: body forward, pitched
+			dir = dir.normalized()
+			var hh := _hold_home.lerp(_hold_home + Vector3(-0.07, 0.13, 0.06), _ads)
+			var base := _chest.global_transform.origin + rgt * hh.x + Vector3.UP * hh.y + fwd * -hh.z
+			var z := -dir                                 # gun space: barrel along -Z
+			var x := Vector3.UP.cross(z)
+			if x.length_squared() < 0.001:
+				x = rgt
+			x = x.normalized()
+			var y := z.cross(x).normalized()
+			gun_hold.global_transform = Transform3D(Basis(x, y, z), base)
+			_gun_mount.transform = Transform3D.IDENTITY
+			if gun.grip and gun.foregrip:
+				# markers sit at the palm; the IK tip is the wrist bone, so step back along the fingers
+				var gr := gun.grip.global_transform
+				var fg := gun.foregrip.global_transform
+				_hand_r.global_transform = Transform3D(gr.basis, gr.origin - gr.basis.y * 0.06)
+				_hand_l.global_transform = Transform3D(fg.basis, fg.origin - fg.basis.y * 0.06)
+				if _ik_r and not _ik_r.is_running(): _ik_r.start()
+				if _ik_l and not _ik_l.is_running(): _ik_l.start()
+		else:
+			if _ik_r and _ik_r.is_running(): _ik_r.stop()
+			if _ik_l and _ik_l.is_running(): _ik_l.stop()
 		return
 	if not gun or dead:
 		return
@@ -605,9 +669,19 @@ func die() -> void:
 	dead = true
 	cancel_reload()
 	if use_squad and anim and anim.has_animation("death"):
-		anim.play("death", 0.15)
 		if _ik_r: _ik_r.stop()
 		if _ik_l: _ik_l.stop()
+		anim.play("death", 0.15)
+		var clip := anim.get_animation("death")
+		if clip and clip.length > 2.0:
+			anim.seek(0.45, true)             # skip the run-up frames, go straight into the fall
+		# Shared clips are pure-rotation (hip translation stripped), so the body would pivot
+		# around a hip fixed at standing height and end up floating. Lower the pivot to the
+		# ground over the fall so the character actually lies on the floor.
+		var hip_h := _hip_height()
+		if _death_tw: _death_tw.kill()
+		_death_tw = create_tween()
+		_death_tw.tween_property(_inst, "position:y", _base_pos.y - hip_h + 0.10, 0.85).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 		return
 	if _ik_r: _ik_r.stop()
 	if _ik_l: _ik_l.stop()
@@ -619,6 +693,16 @@ func die() -> void:
 	_death_tw.tween_property(_inst, "rotation:x", -PI / 2.0 + 0.08, 0.5).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	_death_tw.tween_property(_inst, "position:y", 0.12, 0.5)
 	_death_tw.tween_property(_inst, "rotation:z", randf_range(-0.25, 0.25), 0.5)
+
+## Height of the hips bone above the model origin (world units) — grounds the death fall.
+func _hip_height() -> float:
+	if not skeleton:
+		return 0.9
+	var idx := skeleton.find_bone(_bone("Hips"))
+	if idx < 0:
+		return 0.9
+	var hip_y := (skeleton.global_transform * skeleton.get_bone_global_pose(idx).origin).y
+	return maxf(hip_y - global_position.y, 0.3)
 
 func revive() -> void:
 	dead = false

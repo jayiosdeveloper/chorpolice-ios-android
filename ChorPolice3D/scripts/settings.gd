@@ -48,7 +48,6 @@ const CHARACTERS := [
 	{"id": "bravo", "name": "Ghost", "tag": "Assault", "tier": "EPIC", "col": Color(1.0, 0.55, 0.15), "owned": true},
 	{"id": "striker", "name": "Ace", "tag": "Striker", "tier": "RARE", "col": Color(0.35, 0.7, 1.0), "owned": true},
 	{"id": "nova", "name": "Nova", "tag": "Sniper", "tier": "LEGENDARY", "col": Color(0.85, 0.4, 0.9), "owned": true},
-	{"id": "blaze", "name": "Blaze", "tag": "Heavy", "tier": "EPIC", "col": Color(1.0, 0.35, 0.35), "owned": false},
 	{"id": "vector", "name": "Vector", "tag": "Support", "tier": "RARE", "col": Color(0.4, 0.9, 0.7), "owned": false},
 	{"id": "raptor", "name": "Raptor", "tag": "Scout", "tier": "COMMON", "col": Color(0.6, 0.66, 0.78), "owned": false},
 ]
@@ -70,14 +69,16 @@ var zoom := 0.62
 var left_handed := false
 # HUD layout: kind -> Vector2 centre as a fraction of the screen (right-handed space)
 const HUD_DEFAULTS := {
-	"fire": Vector2(0.944, 0.897), "fire_l": Vector2(0.050, 0.467), "jump": Vector2(0.942, 0.717),
-	"reload": Vector2(0.856, 0.717), "nade": Vector2(0.856, 0.892), "scope": Vector2(0.944, 0.545),
+	"fire": Vector2(0.930, 0.800), "fire_l": Vector2(0.055, 0.440), "jump": Vector2(0.828, 0.675),
+	"reload": Vector2(0.775, 0.865), "nade": Vector2(0.888, 0.915), "scope": Vector2(0.963, 0.575),
 }
 var hud_layout := {}
 var hud_scale := 1.0
 var hud_size := {}   # per-button size multiplier (kind -> float)
 var auto_fire := true                    # fire by itself when an enemy is in the crosshair
 var aim_sens := 1                        # 0 low, 1 normal, 2 high (touch look sensitivity)
+var gyro_aim := false                    # tilt the phone to fine-aim (gyroscope)
+var gyro_sens := 1.0                     # gyro aim strength multiplier
 var bot_level := 1
 var unlimited_ammo := false
 var kills_to_win := 10
@@ -157,6 +158,8 @@ func load_cfg() -> void:
 	zoom = float(c.get_value("s", "zoom", 0.62))
 	left_handed = bool(c.get_value("s", "left", false))
 	auto_fire = bool(c.get_value("s", "autofire", true))
+	gyro_aim = bool(c.get_value("s", "gyro", false))
+	gyro_sens = float(c.get_value("s", "gyrosens", 1.0))
 	hud_scale = float(c.get_value("hud", "scale", 1.0))
 	hud_size = {}
 	for hk in ["fire", "fire_l", "jump", "reload", "nade", "scope"]:
@@ -189,6 +192,8 @@ func save_cfg() -> void:
 	c.set_value("s", "zoom", zoom)
 	c.set_value("s", "left", left_handed)
 	c.set_value("s", "autofire", auto_fire)
+	c.set_value("s", "gyro", gyro_aim)
+	c.set_value("s", "gyrosens", gyro_sens)
 	c.set_value("hud", "scale", hud_scale)
 	for k in hud_layout:
 		c.set_value("hud", k, hud_layout[k])

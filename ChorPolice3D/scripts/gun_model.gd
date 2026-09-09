@@ -17,6 +17,18 @@ var length := 0.8
 
 static var _mats := {}
 
+# Real gun meshes (user-supplied FBX, long axis +X = muzzle) that replace the primitive
+# placeholders; markers / hand grips from the primitive build are kept, so the rig,
+# muzzle flash and reload keep working unchanged.
+const REAL := {
+	Weapons.RIFLE: "res://assets/real/guns/models/M16.fbx",
+	Weapons.UZI: "res://assets/real/guns/models/VectorSMG.fbx",
+	Weapons.SNIPER: "res://assets/real/guns/models/SCAR-H.fbx",
+	Weapons.MAGNUM: "res://assets/real/guns/models/DesertEagle.fbx",
+	Weapons.MP5: "res://assets/real/guns/models/MP5.fbx",
+	Weapons.AK47: "res://assets/real/guns/models/AK47.fbx",
+}
+
 static func mat(key: String) -> StandardMaterial3D:
 	if _mats.has(key):
 		return _mats[key]
@@ -68,8 +80,102 @@ func _ready() -> void:
 		Weapons.FLAMER: _flamer()
 		Weapons.ROCKET: _smaw()
 		_: _m4()
+	_apply_real()
 
 # MARK: primitives
+
+## Swap the primitive placeholder for the real mesh, aligned to the placeholder's bounds.
+func _apply_real() -> void:
+	if not REAL.has(type) or not ResourceLoader.exists(REAL[type]):
+		return
+	var pb := _rel_aabb(self)                      # placeholder bounds (gun space) before stripping
+	if pb.size.z < 0.05:
+		return
+	for c in _all(self):
+		if c is MeshInstance3D:
+			c.queue_free()
+	bolt = null
+	var inst: Node3D = load(REAL[type]).instantiate()
+	add_child(inst)
+	# model long axis is X; find which end is the muzzle (the thin barrel half has the
+	# smaller vertical extent) and turn that end toward gun -Z
+	inst.rotation.y = PI / 2.0 if _muzzle_is_plus_x(inst) else -PI / 2.0
+	var ab := _rel_aabb(inst)
+	if ab.size.z < 0.001:
+		return
+	var s := pb.size.z / ab.size.z
+	inst.scale = Vector3(s, s, s)
+	var pc := pb.position + pb.size * 0.5
+	var rc := (ab.position + ab.size * 0.5) * s
+	inst.position = pc - rc
+	if muzzle:
+		muzzle.position = Vector3(pc.x, muzzle.position.y, ab.position.z * s + inst.position.z - 0.01)
+	_pbr(inst)
+
+## True when the thinner (barrel) half of the mesh lies at +X.
+func _muzzle_is_plus_x(inst: Node3D) -> bool:
+	var pts: PackedVector3Array = []
+	var inv := inst.global_transform.affine_inverse()
+	for c in _all(inst):
+		if c is MeshInstance3D and (c as MeshInstance3D).mesh:
+			var xf := inv * (c as Node3D).global_transform
+			var m: Mesh = (c as MeshInstance3D).mesh
+			for si in m.get_surface_count():
+				var arr := m.surface_get_arrays(si)
+				if arr.size() > Mesh.ARRAY_VERTEX and arr[Mesh.ARRAY_VERTEX] != null:
+					for v in arr[Mesh.ARRAY_VERTEX]:
+						pts.append(xf * v)
+	if pts.size() < 8:
+		return true
+	var lo := 1e20; var hi := -1e20
+	for v in pts:
+		lo = minf(lo, v.x); hi = maxf(hi, v.x)
+	var mid := (lo + hi) * 0.5
+	var q := (hi - lo) * 0.25
+	# compare vertical extent of the outer quarters (stock / grip end is tall, barrel is thin)
+	var ylo_p := 1e20; var yhi_p := -1e20; var ylo_m := 1e20; var yhi_m := -1e20
+	for v in pts:
+		if v.x > mid + q:
+			ylo_p = minf(ylo_p, v.y); yhi_p = maxf(yhi_p, v.y)
+		elif v.x < mid - q:
+			ylo_m = minf(ylo_m, v.y); yhi_m = maxf(yhi_m, v.y)
+	return (yhi_p - ylo_p) < (yhi_m - ylo_m)
+
+func _rel_aabb(n: Node3D) -> AABB:
+	var inv := global_transform.affine_inverse()
+	var out := AABB(); var first := true
+	for c in _all(n):
+		if c is MeshInstance3D and (c as MeshInstance3D).mesh and not c.is_queued_for_deletion():
+			var a: AABB = (inv * (c as Node3D).global_transform) * (c as MeshInstance3D).get_aabb()
+			out = a if first else out.merge(a); first = false
+	return out
+
+func _all(n: Node) -> Array:
+	var r: Array = [n]
+	for c in n.get_children():
+		r.append_array(_all(c))
+	return r
+
+## Give the untextured real meshes believable PBR (by material name) and shadows.
+func _pbr(n: Node) -> void:
+	for c in _all(n):
+		if c is MeshInstance3D and (c as MeshInstance3D).mesh:
+			var mi := c as MeshInstance3D
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			for si in mi.mesh.get_surface_count():
+				var m := mi.get_active_material(si)
+				if m is StandardMaterial3D:
+					var d := (m as StandardMaterial3D).duplicate() as StandardMaterial3D
+					var nm := String(d.resource_name).to_lower()
+					if nm.contains("wood"):
+						d.metallic = 0.0; d.roughness = 0.62
+					elif nm.contains("metal") or nm.contains("mag") or nm.contains("inside") or nm.contains("smooth"):
+						d.metallic = 0.75; d.roughness = 0.42
+					elif nm.contains("white") or nm.contains("red"):
+						d.metallic = 0.1; d.roughness = 0.5
+					else:
+						d.metallic = 0.3; d.roughness = 0.55   # black polymer / receiver
+					mi.set_surface_override_material(si, d)
 
 func _box(pos: Vector3, size: Vector3, m: String, parent: Node3D = null, rot := Vector3.ZERO) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()

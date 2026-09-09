@@ -35,7 +35,7 @@ const PICKUP_PATTERN := [
 	{"kind": "health"}, {"kind": "weapon", "w": 2}, {"kind": "weapon", "w": 1},
 	{"kind": "weapon", "w": 3}, {"kind": "nades"}, {"kind": "weapon", "w": 6},
 	{"kind": "health"}, {"kind": "weapon", "w": 4}, {"kind": "weapon", "w": 5},
-	{"kind": "weapon", "w": 8}, {"kind": "nades"}, {"kind": "weapon", "w": 7},
+	{"kind": "weapon", "w": 0}, {"kind": "nades"}, {"kind": "health"},
 ]
 const BOT_NAMES := ["Raju", "Pappu", "Chintu", "Golu", "Bunty", "Montu", "Tillu", "Babloo"]
 const SKIN_PALETTE := [
@@ -55,6 +55,7 @@ var spawns: Array = []
 var cam_yaw := 0.0
 var cam_pitch := -0.12
 var shake_mag := 0.0
+var recoil_off := Vector2.ZERO       # transient aim kick from firing (x=yaw, y=pitch), recovers
 var mouse_captured := false
 var mouse_rel := Vector2.ZERO
 var mouse_fire := false
@@ -113,12 +114,13 @@ var fire_button: Control
 var fire_button_l: Control
 var scope_button: Control
 var reticle: Control
+const RECOIL_RECOVER := 9.0
 var scope_overlay: Control
 var ads := false
 var ads_t := 0.0
 var next_button: Button
 var center_label: Label
-var crosshair: Polygon2D
+var crosshair                       # _Crosshair (dynamic); untyped for inner-class access
 var pause_layer: CanvasLayer
 var pause_box: VBoxContainer
 var hit_vignette: ColorRect
@@ -243,8 +245,27 @@ func _build_camera() -> void:
 	_update_camera(1.0, true)
 
 func _cam_dir() -> Vector3:
-	var c := cos(cam_pitch)
-	return Vector3(-sin(cam_yaw) * c, sin(cam_pitch), -cos(cam_yaw) * c)
+	var p := cam_pitch + recoil_off.y
+	var y := cam_yaw + recoil_off.x
+	var c := cos(p)
+	return Vector3(-sin(y) * c, sin(p), -cos(y) * c)
+
+## A clean FF-style dynamic crosshair: 4 ticks + a centre dot; `spread` pushes the ticks
+## out when firing and eases back, so shots read as "spraying".
+class _Crosshair:
+	extends Control
+	var spread := 0.0
+	func _draw() -> void:
+		var ctr := size / 2.0
+		var gap := 5.0 + spread
+		var ln := 7.0
+		var th := 2.0
+		var col := Color(1, 1, 1, 0.92)
+		var sh := Color(0, 0, 0, 0.5)
+		for d in [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)]:
+			draw_line(ctr + d * gap + Vector2(1, 1), ctr + d * (gap + ln) + Vector2(1, 1), sh, th)
+			draw_line(ctr + d * gap, ctr + d * (gap + ln), col, th)
+		draw_circle(ctr, 1.7, col)
 
 func _cam_right() -> Vector3:
 	return Vector3(cos(cam_yaw), 0.0, -sin(cam_yaw))
@@ -322,12 +343,11 @@ func _build_hud() -> void:
 	name_label.offset_top = 70
 	hud.add_child(name_label)
 
-	# crosshair (centre of the screen — where the camera looks; bullets go there or to the assisted target)
-	crosshair = Shapes.circ(3.5, Color(1, 1, 1, 0.85))
+	# dynamic crosshair (4 ticks + dot; spreads on fire, tightens back — shooting feedback)
 	var vp := get_viewport().get_visible_rect().size
-	crosshair.position = vp / 2.0
-	var ring := Shapes.circ(11, Color(1, 1, 1, 0.0))
-	crosshair.add_child(ring)
+	crosshair = _Crosshair.new()
+	crosshair.set_anchors_preset(Control.PRESET_FULL_RECT)
+	crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(crosshair)
 
 	if not is_mp:
@@ -614,6 +634,12 @@ func on_pickup(p: Pickup3D) -> void:
 # MARK: loop + controls
 
 func _physics_process(delta: float) -> void:
+	# ease firing recoil + crosshair spread back to rest
+	if recoil_off != Vector2.ZERO:
+		recoil_off = recoil_off.lerp(Vector2.ZERO, 1.0 - exp(-delta * RECOIL_RECOVER))
+	if crosshair and crosshair.spread > 0.01:
+		crosshair.spread = move_toward(crosshair.spread, 0.0, 70.0 * delta)
+		crosshair.queue_redraw()
 	if not match_over:
 		if is_mp:
 			_broadcast_state(delta)
@@ -660,6 +686,13 @@ func _physics_process(delta: float) -> void:
 		cam_pitch = clampf(cam_pitch - look_delta.y * sens, -0.9, 0.7)
 		dragging = look_delta.length() > 0.8
 		look_delta = Vector2.ZERO
+	# gyroscope fine-aim (tilt the phone) — optional, combines with touch look
+	if Settings.gyro_aim:
+		var gy := Input.get_gyroscope()
+		if gy.length_squared() > 0.0000004:
+			var gs: float = [0.6, 1.0, 1.5][clampi(Settings.aim_sens, 0, 2)] * Settings.gyro_sens * zoom_k * 2.4
+			cam_yaw += gy.y * delta * gs
+			cam_pitch = clampf(cam_pitch + gy.x * delta * gs, -0.9, 0.7)
 	# aim magnet + auto-fire: an enemy near the crosshair pulls the camera onto them
 	if not player.dead and not match_over:
 		var tgt := _assist_target(lerpf(10.0, 5.0, ads_t), lerpf(40.0, 80.0, ads_t))
@@ -710,6 +743,8 @@ func _physics_process(delta: float) -> void:
 		else:
 			body_yaw = cam_yaw                  # backpedal: keep facing forward
 	player.set_aim(lerp_angle(player.aim_yaw, body_yaw, 1.0 - exp(-delta * 14.0)), cam_pitch)
+	if player.model and player.model.has_method("set_aim_dir"):
+		player.model.set_aim_dir(_shoot_dir())   # gun barrel follows the crosshair ray exactly
 	if player.dead:
 		player.velocity = Vector3(0, player.velocity.y - Fighter.GRAVITY * delta, 0)
 		player.move_and_slide()
@@ -856,6 +891,13 @@ func _fire() -> void:
 			_muzzle_flash(muzzle, Color(1, 0.9, 0.4))
 	_play_fire_sound()
 	shake((1.5 if current_weapon != Weapons.SNIPER else 3.0) * lerpf(1.0, 0.5, ads_t))
+	# recoil kick (view climbs + slight random horizontal) + crosshair bloom, per weapon
+	var rf: float = 2.3 if current_weapon in [Weapons.SHOTGUN, Weapons.SNIPER, Weapons.MAGNUM, Weapons.ROCKET] else 1.0
+	var ads_k := lerpf(1.0, 0.45, ads_t)
+	recoil_off.y += 0.010 * rf * ads_k
+	recoil_off.x += randf_range(-0.0045, 0.0045) * rf
+	if crosshair:
+		crosshair.spread = minf(crosshair.spread + 7.0 * rf * ads_k, 36.0)
 
 	if is_mp:
 		Net.send({"t": "fire", "x": muzzle.x, "y": muzzle.y, "z": muzzle.z,
@@ -891,18 +933,33 @@ func _spawn_rocket(pos: Vector3, dir: Vector3, from_player: bool, owner_id := 0)
 
 ## Each weapon gets a distinct fire sound — real SMG/pistol/explosion bases, tuned per
 ## gun by pitch + volume so an UZI, rifle, MP5, shotgun, sniper, magnum all sound different.
+## Stream name of a weapon's real gunshot recording (see _play_fire_sound).
+func _fire_sound_name(w: int) -> String:
+	match w:
+		Weapons.UZI: return "uzi"
+		Weapons.MP5: return "mp5"
+		Weapons.AK47: return "ak47"
+		Weapons.SHOTGUN: return "shotgun"
+		Weapons.SNIPER: return "sniper"
+		Weapons.MAGNUM: return "magnum"
+		Weapons.ROCKET: return "rocket"
+		_: return "rifle"
+
 func _play_fire_sound() -> void:
+	# one REAL recording per weapon (fps-asset-kit CC0 firearm library), natural pitch
 	match current_weapon:
 		Weapons.UZI:
-			Audio.play("rifle", -2.0, 1.30)      # fast, tinny SMG
+			Audio.play("uzi", -2.0)              # PPSh SMG
 		Weapons.MP5:
-			Audio.play("rifle", -1.0, 1.14)      # slightly deeper SMG
+			Audio.play("mp5", -1.5)              # 9mm SMG
+		Weapons.AK47:
+			Audio.play("ak47", 0.5)              # AK-47 7.62
 		Weapons.SHOTGUN:
-			Audio.play("shotgun", 1.5, 0.9)      # deep boom
+			Audio.play("shotgun", 1.5)           # 12ga pump
 		Weapons.SNIPER:
-			Audio.play("sniper", 2.0, 0.85)      # big, slow crack
+			Audio.play("sniper", 2.0)            # 7.62x54 bolt rifle
 		Weapons.MAGNUM:
-			Audio.play("sniper", 0.0, 1.28)      # sharp punchy handgun
+			Audio.play("magnum", 0.5)            # .38 revolver
 		Weapons.FLAMER:
 			flame_count += 1
 			if flame_count % 3 == 0:
@@ -910,7 +967,7 @@ func _play_fire_sound() -> void:
 		Weapons.ROCKET:
 			Audio.play("rocket")                 # real explosion launch
 		_:
-			Audio.play("rifle", 0.0, 1.0)        # M4 rifle
+			Audio.play("rifle", 0.0)             # AR-15 / M4
 
 ## Called by Bullet3D when its ray hits something.
 func bullet_hit(b: Bullet3D, hit: Dictionary) -> void:
@@ -1371,7 +1428,7 @@ func _remote_fire(sender: int, msg: Dictionary) -> void:
 				_spawn_bullet(origin, _spread(dir, d["spread"]), d, false, false, sender)
 			_muzzle_flash(origin, Color(1, 0.5, 0.3))
 	var dist := origin.distance_to(player.global_position)
-	Audio.play("rifle", linear_to_db(clampf(1.0 - dist / 40.0, 0.15, 0.8)))
+	Audio.play(_fire_sound_name(w), linear_to_db(clampf(1.0 - dist / 40.0, 0.15, 0.8)))
 	if remotes.has(sender) and remotes[sender].model:
 		remotes[sender].model.recoil()
 		remotes[sender].model.fire_pose()
@@ -1817,8 +1874,8 @@ func _input(event: InputEvent) -> void:
 			_release_mouse()
 		elif event.keycode == KEY_R:
 			_start_reload()
-		elif event.keycode >= KEY_1 and event.keycode <= KEY_9:
-			_equip(event.keycode - KEY_1)
+		elif event.keycode >= KEY_1 and event.keycode <= KEY_7:
+			_equip(event.keycode - KEY_1)   # weapons 0-6 (Rocket + Flamer removed)
 			Audio.play("swap")
 		return
 

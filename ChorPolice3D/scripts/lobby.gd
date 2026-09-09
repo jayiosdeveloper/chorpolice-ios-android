@@ -39,9 +39,9 @@ func _compute_safe() -> void:
 	var sa := DisplayServer.get_display_safe_area()
 	_safe_l = maxf(0.0, float(sa.position.x) * sx)
 	_safe_r = maxf(0.0, float(win.x - (sa.position.x + sa.size.x)) * sx)
-	# a sensible floor so edges never hug the bezel even when the OS reports none
-	_safe_l = maxf(_safe_l, 24.0)
-	_safe_r = maxf(_safe_r, 24.0)
+	# a sensible floor so edges never hug the bezel / notch even when the OS reports none
+	_safe_l = maxf(_safe_l, 52.0)
+	_safe_r = maxf(_safe_r, 30.0)
 
 func _ready() -> void:
 	randomize()
@@ -221,21 +221,22 @@ func _main() -> void:
 	var vp := get_viewport().get_visible_rect().size
 	var lx := _safe_l + 40.0
 
-	# TOP-LEFT — live 3D animated metal wordmark
+	# TOP-LEFT — live 3D animated metal wordmark (kept clear of the notch/top bar)
+	var ty := vp.y * 0.17
 	var logo3d := Logo3D.new()
 	logo3d.size = Vector2(460, 250)
-	logo3d.position = Vector2(lx - 24, vp.y * 0.11)
+	logo3d.position = Vector2(lx - 12, ty)
 	root.add_child(logo3d)
 
 	var pills := HBoxContainer.new()
-	pills.position = Vector2(lx + 6, vp.y * 0.11 + 236)
+	pills.position = Vector2(lx + 8, ty + 232)
 	pills.add_theme_constant_override("separation", 8)
 	root.add_child(pills)
 	pills.add_child(UI.pill("3D ARENA", UI.CYAN, 15))
 	pills.add_child(UI.pill("6 MAPS", UI.ORANGE, 15))
 	pills.add_child(UI.pill("9 GUNS", UI.BLUE, 15))
 	var online := UI.label(("●  %d players online" % Net.online_count) if Net.online_count > 0 else "○  connecting…", 16, UI.GREEN if Net.online_count > 0 else UI.MUTED)
-	online.position = Vector2(lx + 6, vp.y * 0.11 + 280)
+	online.position = Vector2(lx + 8, ty + 276)
 	root.add_child(online)
 
 	# CENTRE — drag-to-rotate hint under the hero's feet
@@ -315,42 +316,93 @@ const MAP_COL := [UI.ORANGE, UI.BLUE, UI.GREEN, UI.CYAN, UI.RED, UI.PURPLE]
 ## Pick which of the 6 arenas to play before the match starts (Practice).
 func _map_pick() -> void:
 	var vp := get_viewport().get_visible_rect().size
-	var left := VBoxContainer.new()
-	left.position = Vector2(56, vp.y * 0.2)
-	left.add_theme_constant_override("separation", 6)
-	root.add_child(left)
-	left.add_child(UI.label("CHOOSE", 60, UI.TEXT))
-	left.add_child(UI.label("MAP", 60, UI.ORANGE))
-	left.add_child(UI.bar(220, 5))
-	left.add_child(UI.label("Tap a map to start practice", 15, UI.MUTED))
+	if bg:
+		bg.set_hero(0.5, 0.9, 0.0)          # hide the hero for a clean, full map picker
+
+	# centred header
+	var title := UI.label("CHOOSE YOUR MAP", 42, UI.TEXT, true, HORIZONTAL_ALIGNMENT_CENTER)
+	title.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	title.offset_top = vp.y * 0.07
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(title)
+	var barc := UI.bar(180, 5, UI.ORANGE, UI.BLUE)
+	barc.position = Vector2(vp.x * 0.5 - 90, vp.y * 0.07 + 52)
+	root.add_child(barc)
+	var sub := UI.label("Tap a map to drop into practice", 15, UI.MUTED, false, HORIZONTAL_ALIGNMENT_CENTER)
+	sub.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	sub.offset_top = vp.y * 0.07 + 62
+	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(sub)
+
+	# centred grid of real map-photo cards (columns fit the number of active maps)
+	var n := Maps.count()
+	var cols: int = mini(n, 3)
+	var cw := 400.0 if n <= 2 else 340.0
+	var ch := 236.0 if n <= 2 else 200.0
+	var hs := 24.0
+	var gw := cols * cw + (cols - 1) * hs
 	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.position = Vector2(vp.x - 620, vp.y * 0.12)
-	grid.add_theme_constant_override("h_separation", 12)
-	grid.add_theme_constant_override("v_separation", 10)
+	grid.columns = cols
+	grid.position = Vector2((vp.x - gw) / 2.0, vp.y * 0.28)
+	grid.add_theme_constant_override("h_separation", int(hs))
+	grid.add_theme_constant_override("v_separation", 22)
 	root.add_child(grid)
 	for i in Maps.count():
-		var m := Maps.get_map(i)
-		var b := Button.new()
-		b.custom_minimum_size = Vector2(296, 88)
-		var col: Color = MAP_COL[i % MAP_COL.size()]
-		var sb := UI.glass(0.07, 16.0, UI.LINE, 1); sb.set_content_margin_all(0)
-		var hov := UI.glass(0.14, 16.0, Color(col.r, col.g, col.b, 0.8), 1); hov.set_content_margin_all(0)
-		b.add_theme_stylebox_override("normal", sb)
-		b.add_theme_stylebox_override("hover", hov)
-		b.add_theme_stylebox_override("pressed", hov)
-		b.add_theme_stylebox_override("focus", sb)
-		b.pressed.connect(_start_practice.bind(i))
-		grid.add_child(b)
-		var stripe := ColorRect.new(); stripe.color = col; stripe.position = Vector2(0, 16); stripe.size = Vector2(5, 56)
-		stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE; b.add_child(stripe)
-		var tv := VBoxContainer.new()
-		tv.set_anchors_preset(Control.PRESET_FULL_RECT); tv.offset_left = 18; tv.offset_top = 14
-		tv.add_theme_constant_override("separation", 2); tv.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		b.add_child(tv)
-		tv.add_child(UI.label("%d.  %s" % [i + 1, m["name"]], 22, UI.TEXT))
-		tv.add_child(UI.label(MAP_DESC[i % MAP_DESC.size()], 13, UI.MUTED))
+		grid.add_child(_map_card(i, cw, ch))
 	_back_button(_goto.bind(Screen.MAIN))
+
+## A premium map card: the real rendered map photo, a colour accent, a number badge,
+## and a dark scrim with the map name + description. Tapping starts practice there.
+func _map_card(i: int, cw: float, ch: float) -> Control:
+	var m := Maps.get_map(i)
+	var col: Color = MAP_COL[i % MAP_COL.size()]
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(cw, ch)
+	b.clip_contents = true
+	var sb := UI.glass(0.05, 16.0, UI.LINE, 1); sb.set_content_margin_all(0)
+	var hov := UI.glass(0.05, 16.0, col, 3); hov.set_content_margin_all(0)
+	b.add_theme_stylebox_override("normal", sb)
+	b.add_theme_stylebox_override("hover", hov)
+	b.add_theme_stylebox_override("pressed", hov)
+	b.add_theme_stylebox_override("focus", sb)
+	b.pressed.connect(_start_practice.bind(i))
+
+	var pth := "res://assets/real/maps/map%d.png" % i
+	if ResourceLoader.exists(pth):
+		var pic := TextureRect.new()
+		pic.texture = load(pth)
+		pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		pic.set_anchors_preset(Control.PRESET_FULL_RECT)
+		pic.offset_left = 3; pic.offset_top = 3; pic.offset_right = -3; pic.offset_bottom = -3
+		pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.add_child(pic)
+	# dark scrim for text
+	var scrim := TextureRect.new()
+	scrim.texture = UI.grad_tex([Color(0, 0, 0, 0.0), Color(0.01, 0.02, 0.05, 0.9)])
+	scrim.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	scrim.stretch_mode = TextureRect.STRETCH_SCALE
+	scrim.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	scrim.offset_left = 3; scrim.offset_right = -3; scrim.offset_top = -78; scrim.offset_bottom = -3
+	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(scrim)
+	# number badge (top-left)
+	var badge := UI.pill("MAP %d" % (i + 1), col, 12)
+	badge.position = Vector2(12, 12)
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(badge)
+	# name + description
+	var nm := UI.label(str(m["name"]), 22, UI.TEXT)
+	nm.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	nm.offset_left = 14; nm.offset_top = -50; nm.offset_right = cw - 8
+	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(nm)
+	var desc := UI.label(MAP_DESC[i % MAP_DESC.size()], 13, Color(col.r, col.g, col.b, 0.95))
+	desc.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	desc.offset_left = 14; desc.offset_top = -26; desc.offset_right = cw - 8
+	desc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(desc)
+	return b
 
 func _centered() -> void:
 	# HOST shows match setup; JOIN and WAIT show the same iOS-style "JOINING GAME"
@@ -1196,9 +1248,15 @@ func _big_start() -> void:
 	var b := Button.new()
 	b.custom_minimum_size = Vector2(360, 136)
 	b.position = Vector2(vp.x - 360 - _safe_r - 40, vp.y - 158)
-	var g := UI.GREEN
-	var sb := UI.solid(g, 22.0)
-	var hov := UI.solid(Color(0.26, 0.82, 0.46), 22.0)
+	# unique premium CTA: bright green with a soft outer glow + rounded corners
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.20, 0.80, 0.42)
+	sb.set_corner_radius_all(26)
+	sb.shadow_color = Color(0.20, 0.85, 0.45, 0.5)
+	sb.shadow_size = 20
+	var hov := sb.duplicate() as StyleBoxFlat
+	hov.bg_color = Color(0.28, 0.88, 0.52)
+	hov.shadow_size = 26
 	b.add_theme_stylebox_override("normal", sb)
 	b.add_theme_stylebox_override("hover", hov)
 	b.add_theme_stylebox_override("pressed", hov)
@@ -1207,21 +1265,35 @@ func _big_start() -> void:
 	root.add_child(b)
 	var hb := HBoxContainer.new()
 	hb.set_anchors_preset(Control.PRESET_FULL_RECT)
-	hb.offset_left = 26; hb.offset_right = -18
+	hb.offset_left = 28; hb.offset_right = -22
 	hb.alignment = BoxContainer.ALIGNMENT_CENTER
-	hb.add_theme_constant_override("separation", 14)
+	hb.add_theme_constant_override("separation", 18)
 	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	b.add_child(hb)
-	var tri := UI.label("▶", 36, Color(0.03, 0.06, 0.04))
+	# circular play badge
+	var badge := Panel.new()
+	badge.custom_minimum_size = Vector2(58, 58)
+	badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var bsb := StyleBoxFlat.new()
+	bsb.bg_color = Color(1, 1, 1, 0.92)
+	bsb.set_corner_radius_all(29)
+	badge.add_theme_stylebox_override("panel", bsb)
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hb.add_child(badge)
+	var tri := UI.label("▶", 26, Color(0.10, 0.55, 0.28))
+	tri.set_anchors_preset(Control.PRESET_FULL_RECT)
+	tri.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tri.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	tri.offset_left = 4
 	tri.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hb.add_child(tri)
+	badge.add_child(tri)
 	var tv := VBoxContainer.new()
 	tv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	tv.add_theme_constant_override("separation", 0)
 	tv.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hb.add_child(tv)
-	tv.add_child(UI.label("START", 40, Color(0.03, 0.06, 0.04)))
-	tv.add_child(UI.label("Practice vs Bots", 16, Color(0.05, 0.12, 0.06)))
+	tv.add_child(UI.label("START", 40, Color(0.02, 0.10, 0.04)))
+	tv.add_child(UI.label("Practice vs Bots", 15, Color(0.03, 0.14, 0.06)))
 
 func _menu_card(parent: Node, title: String, subtitle: String, accent: Color, cb: Callable, glyph := "target") -> void:
 	var b := Button.new()
