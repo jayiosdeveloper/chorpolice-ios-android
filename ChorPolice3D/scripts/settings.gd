@@ -77,6 +77,7 @@ var hud_scale := 1.0
 var hud_size := {}   # per-button size multiplier (kind -> float)
 var auto_fire := true                    # fire by itself when an enemy is in the crosshair
 var aim_sens := 1                        # 0 low, 1 normal, 2 high (touch look sensitivity)
+var haptics := true                     # vibration on shots / hits / blasts
 var gyro_aim := false                    # tilt the phone to fine-aim (gyroscope)
 var gyro_sens := 1.0                     # gyro aim strength multiplier
 var bot_level := 1
@@ -159,6 +160,7 @@ func load_cfg() -> void:
 	left_handed = bool(c.get_value("s", "left", false))
 	auto_fire = bool(c.get_value("s", "autofire", true))
 	gyro_aim = bool(c.get_value("s", "gyro", false))
+	haptics = bool(c.get_value("s", "haptics", true))
 	gyro_sens = float(c.get_value("s", "gyrosens", 1.0))
 	hud_scale = float(c.get_value("hud", "scale", 1.0))
 	hud_size = {}
@@ -193,6 +195,7 @@ func save_cfg() -> void:
 	c.set_value("s", "left", left_handed)
 	c.set_value("s", "autofire", auto_fire)
 	c.set_value("s", "gyro", gyro_aim)
+	c.set_value("s", "haptics", haptics)
 	c.set_value("s", "gyrosens", gyro_sens)
 	c.set_value("hud", "scale", hud_scale)
 	for k in hud_layout:

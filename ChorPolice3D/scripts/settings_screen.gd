@@ -436,6 +436,7 @@ func _build_controls() -> void:
 		Settings.aim_sens = v
 		Settings.save_cfg()
 		_refresh())
+	_switch("Vibration", "Haptic feedback for shots, hits and explosions", "haptics")
 	_switch("Gyro aim", "Tilt the phone to fine-aim (like PUBG / Free Fire)", "gyro_aim")
 	content.add_child(UI.heading("Gyro strength"))
 	_seg(["Low", "Medium", "High"], [0.6, 1.0, 1.6], Settings.gyro_sens, func(v: float) -> void:

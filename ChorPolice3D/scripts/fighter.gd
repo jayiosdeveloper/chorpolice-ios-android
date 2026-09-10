@@ -30,6 +30,7 @@ var max_health := 100.0
 var health := 100.0
 var dead := false
 var last_hit_wname := ""             # for the kill feed
+var flinch_t := 0.0                   # bots: aim thrown off right after being hit
 var last_hit_by := ""
 var current_weapon := 0
 var name_text := ""

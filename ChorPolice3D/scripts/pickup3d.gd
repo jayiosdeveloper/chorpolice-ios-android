@@ -6,6 +6,7 @@ extends Area3D
 var game: Node
 var kind := "health"
 var weapon_type := 0
+var attach_type := ""                # for kind == "attach": supp / comp / scope
 var spot := 0
 var taken := false
 var _root: Node3D
@@ -40,6 +41,10 @@ func _ready() -> void:
 			col = Color(0.36, 0.5, 0.28)
 			label = "GRENADES"
 			model_path = "res://assets/real/models/ammo_box/ammo_box_1k.gltf"
+		"attach":
+			col = Color(0.4, 0.85, 1.0)
+			label = {"supp": "SUPPRESSOR", "comp": "COMPENSATOR", "scope": "RED DOT"}.get(attach_type, "ATTACHMENT")
+			model_path = ""
 		_:
 			col = Color(0.95, 0.6, 0.18)
 			label = String(Weapons.data(weapon_type)["name"])
@@ -55,7 +60,32 @@ func _ready() -> void:
 			inst.scale = Vector3(s, s, s)
 			inst.position = -ab.position * s      # sit centred on the disc
 		placed = true
-	if kind != "health" and kind != "nades":       # the real gun: centred, tilted, spinning, glowing
+	if kind == "attach":                            # small floating attachment part + ring
+		var pivot := Node3D.new()
+		pivot.rotation.z = 0.35
+		pivot.scale = Vector3(3.4, 3.4, 3.4)
+		_root.add_child(pivot)
+		var g := GunModel.new()
+		g.type = 0
+		pivot.add_child(g)
+		g.add_attachment(attach_type)
+		var part: Node3D = g.attachments.get(attach_type, null)
+		for c in g.get_children():                  # keep only the attachment part itself
+			if c != part:
+				c.queue_free()
+		if part:
+			var pb := _merged_aabb(part)
+			g.position = -(pb.position + pb.size * 0.5)   # spin the part about its own centre
+		_base_y = 0.62
+		placed = true
+		var ring := MeshInstance3D.new()
+		var tm := TorusMesh.new(); tm.inner_radius = 0.34; tm.outer_radius = 0.44
+		var rm := StandardMaterial3D.new()
+		rm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED; rm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA; rm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		rm.albedo_color = Color(col.r, col.g, col.b, 0.9); rm.emission_enabled = true; rm.emission = col; rm.emission_energy_multiplier = 2.5
+		tm.material = rm; ring.mesh = tm; ring.position = Vector3(0, 0.03, 0); ring.scale = Vector3(1, 0.22, 1)
+		add_child(ring); _ring = ring
+	if kind == "weapon":       # the real gun: centred, tilted, spinning, glowing
 		var pivot := Node3D.new()
 		pivot.rotation.z = 0.32                    # jaunty tilt so it reads as a dropped weapon
 		pivot.scale = Vector3(1.15, 1.15, 1.15)

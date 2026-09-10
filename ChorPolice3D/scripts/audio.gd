@@ -4,7 +4,7 @@ extends Node
 
 const NAMES := ["rifle", "uzi", "shotgun", "sniper", "hit", "explosion", "pickup",
 	"capture", "win", "flame", "rocket", "nade_throw", "jet", "music_menu", "music_battle",
-	"reload", "step", "click", "swap", "ak47", "mp5", "magnum", "hitmarker"]
+	"reload", "step", "click", "swap", "ak47", "mp5", "magnum", "hitmarker", "heartbeat"]
 
 var sound_on := true
 var music_on := true
@@ -13,6 +13,7 @@ var _streams := {}
 var _sfx: Array[AudioStreamPlayer] = []
 var _sfx_i := 0
 var _jet: AudioStreamPlayer
+var _heart: AudioStreamPlayer
 var _music: AudioStreamPlayer
 var _track := "menu"
 var _sfx3d: Array = []                  # positional one-shots (enemy fire / steps / explosions)
@@ -27,7 +28,7 @@ func _ready() -> void:
 			if ResourceLoader.exists(pth):
 				s = load(pth)
 				break
-		if s is AudioStreamWAV and (n == "jet" or n.begins_with("music")):
+		if s is AudioStreamWAV and (n == "jet" or n == "heartbeat" or n.begins_with("music")):
 			s.loop_mode = AudioStreamWAV.LOOP_FORWARD
 			s.loop_begin = 0
 			s.loop_end = s.data.size() / 2
@@ -39,6 +40,9 @@ func _ready() -> void:
 	_jet = AudioStreamPlayer.new()
 	_jet.stream = _streams.get("jet")
 	add_child(_jet)
+	_heart = AudioStreamPlayer.new()
+	_heart.stream = _streams.get("heartbeat")
+	add_child(_heart)
 	_music = AudioStreamPlayer.new()
 	add_child(_music)
 	sound_on = Settings.sound_on
@@ -80,12 +84,37 @@ func play_at(name: String, pos: Vector3, volume_db := 0.0, pitch := 1.0, max_dis
 	else:
 		p = _sfx3d[_sfx3d_i % _sfx3d.size()]
 		_sfx3d_i += 1
-	p.global_position = pos
-	p.stream = s
-	p.volume_db = volume_db
-	p.pitch_scale = pitch
-	p.max_distance = max_dist
-	p.play()
+	p.attenuation_filter_cutoff_hz = 4200        # far shots get muffled like real distance
+	p.attenuation_filter_db = -20.0
+	var cam := get_viewport().get_camera_3d()
+	var delay := 0.0
+	if cam:
+		delay = cam.global_position.distance_to(pos) / 343.0   # speed of sound
+	var fire := func() -> void:
+		if not is_instance_valid(p):
+			return
+		p.global_position = pos
+		p.stream = s
+		p.volume_db = volume_db
+		p.pitch_scale = pitch
+		p.max_distance = max_dist
+		p.play()
+	if delay > 0.04:
+		get_tree().create_timer(delay).timeout.connect(fire)
+	else:
+		fire.call()
+
+## Low-health heartbeat loop; `rate` speeds it up as HP drops.
+func set_heartbeat(on: bool, rate := 1.0) -> void:
+	if not _heart:
+		return
+	if on and sound_on:
+		_heart.pitch_scale = rate
+		_heart.volume_db = -6.0
+		if not _heart.playing:
+			_heart.play()
+	elif _heart.playing:
+		_heart.stop()
 
 func set_jet(on: bool) -> void:
 	if on and sound_on:

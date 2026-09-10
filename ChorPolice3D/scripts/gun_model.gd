@@ -14,6 +14,7 @@ var mag: Node3D
 var eject: Marker3D
 var bolt: MeshInstance3D           # slides back on each shot (if the gun has one)
 var length := 0.8
+var attachments := {}                # "supp" / "comp" / "scope" -> Node3D
 
 static var _mats := {}
 
@@ -63,6 +64,43 @@ static func mat(key: String) -> StandardMaterial3D:
 			m.albedo_color = Color(0.2, 0.2, 0.2)
 	_mats[key] = m
 	return m
+
+## Bolt-on attachments: suppressor / compensator on the muzzle, red-dot scope on top.
+func add_attachment(a: String) -> void:
+	if attachments.has(a) or muzzle == null:
+		return
+	var n := Node3D.new()
+	match a:
+		"supp":
+			var c := CylinderMesh.new(); c.top_radius = 0.022; c.bottom_radius = 0.022; c.height = 0.17; c.radial_segments = 12
+			c.material = mat("black")
+			var mi := MeshInstance3D.new(); mi.mesh = c; mi.rotation.x = PI / 2.0
+			mi.position = Vector3(muzzle.position.x, muzzle.position.y, muzzle.position.z - 0.075)
+			n.add_child(mi)
+			muzzle.position.z -= 0.15
+		"comp":
+			var c := CylinderMesh.new(); c.top_radius = 0.02; c.bottom_radius = 0.026; c.height = 0.07; c.radial_segments = 8
+			c.material = mat("steel")
+			var mi := MeshInstance3D.new(); mi.mesh = c; mi.rotation.x = PI / 2.0
+			mi.position = Vector3(muzzle.position.x, muzzle.position.y, muzzle.position.z - 0.03)
+			n.add_child(mi)
+			for k in 3:
+				var slot := BoxMesh.new(); slot.size = Vector3(0.06, 0.006, 0.012); slot.material = mat("black")
+				var sm := MeshInstance3D.new(); sm.mesh = slot; sm.position = mi.position + Vector3(0, 0.02, -0.02 + k * 0.016)
+				n.add_child(sm)
+			muzzle.position.z -= 0.06
+		"scope":
+			var body := BoxMesh.new(); body.size = Vector3(0.03, 0.03, 0.07); body.material = mat("black")
+			var mi := MeshInstance3D.new(); mi.mesh = body; mi.position = Vector3(0, 0.115, -0.02)
+			n.add_child(mi)
+			var lens := BoxMesh.new(); lens.size = Vector3(0.024, 0.024, 0.004); lens.material = mat("glass")
+			var lm := MeshInstance3D.new(); lm.mesh = lens; lm.position = Vector3(0, 0.115, -0.056)
+			n.add_child(lm)
+			var mount := BoxMesh.new(); mount.size = Vector3(0.02, 0.03, 0.05); mount.material = mat("steel")
+			var mm := MeshInstance3D.new(); mm.mesh = mount; mm.position = Vector3(0, 0.09, -0.02)
+			n.add_child(mm)
+	add_child(n)
+	attachments[a] = n
 
 static func build(t: int) -> GunModel:
 	var g := GunModel.new()

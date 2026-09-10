@@ -34,6 +34,7 @@ const BOT_PROFILES := [
 	 "chaseBias": 0.95, "standoff": 6.0, "dodgeProb": 0.75, "lead": 1.0, "maxAlive": 5},
 ]
 const PICKUP_PATTERN := [
+	{"kind": "attach", "a": "supp"}, {"kind": "attach", "a": "comp"}, {"kind": "attach", "a": "scope"},
 	{"kind": "health"}, {"kind": "weapon", "w": 2}, {"kind": "weapon", "w": 1},
 	{"kind": "weapon", "w": 3}, {"kind": "nades"}, {"kind": "weapon", "w": 6},
 	{"kind": "health"}, {"kind": "weapon", "w": 4}, {"kind": "weapon", "w": 5},
@@ -58,6 +59,27 @@ var cam_yaw := 0.0
 var cam_pitch := -0.12
 var shake_mag := 0.0
 var recoil_off := Vector2.ZERO       # transient aim kick from firing (x=yaw, y=pitch), recovers
+var _shot_idx := 0                   # position in the weapon's recoil pattern
+var _last_shot_t := 0.0
+var cam_roll := 0.0                  # brief view tilt away from a hit
+var lean := 0.0                      # -1 left / 0 / 1 right (peek around cover)
+var lean_t := 0.0
+var lean_ids := {}                   # touch index -> -1 / 1
+var lean_l_button: Control
+var lean_r_button: Control
+var lowhp_rect: ColorRect
+var lowhp_amt := 0.0
+var attachments := {}                # weapon id -> {"supp": true, ...}
+# Per-weapon recoil: shot-by-shot kick pattern (x = horizontal, y = vertical), kick size, recovery
+const RECOIL := {
+	0: {"k": 0.0085, "recover": 12.0, "pat": [[0.0, 1.0], [0.05, 1.05], [-0.1, 1.1], [0.15, 1.15], [0.2, 1.0], [-0.25, 0.95], [-0.2, 1.0], [0.1, 1.05]]},
+	6: {"k": 0.0120, "recover": 9.0,  "pat": [[0.0, 1.0], [0.15, 1.1], [0.25, 1.2], [0.1, 1.15], [-0.2, 1.1], [-0.3, 1.0], [0.25, 1.05], [0.3, 1.0]]},
+	5: {"k": 0.0060, "recover": 13.0, "pat": [[0.0, 1.0], [-0.1, 1.0], [0.1, 1.05], [0.15, 1.0], [-0.15, 1.0], [0.05, 1.0]]},
+	1: {"k": 0.0070, "recover": 13.0, "pat": [[0.0, 1.0], [0.2, 1.0], [-0.2, 1.05], [0.25, 1.0], [-0.25, 1.0]]},
+	2: {"k": 0.0300, "recover": 7.0,  "pat": [[0.0, 1.0]]},
+	3: {"k": 0.0380, "recover": 6.0,  "pat": [[0.0, 1.0]]},
+	4: {"k": 0.0240, "recover": 9.0,  "pat": [[0.0, 1.0], [0.1, 1.0]]},
+}
 var mouse_captured := false
 var mouse_rel := Vector2.ZERO
 var mouse_fire := false
@@ -311,7 +333,7 @@ func _update_camera(delta: float, snap := false) -> void:
 	var pivot := player.global_position + Vector3(0, lerpf(CAM_UP, 1.5, ads_t), 0)
 	var dir := _cam_dir()
 	var rgt := _cam_right()
-	var want := pivot - dir * lerpf(CAM_DIST, 1.45, ads_t) + rgt * lerpf(CAM_SIDE, 0.5, ads_t) + Vector3(0, lerpf(0.35, 0.12, ads_t), 0)
+	var want := pivot - dir * lerpf(CAM_DIST, 1.45, ads_t) + rgt * (lerpf(CAM_SIDE, 0.5, ads_t) + lean_t * 0.55) + Vector3(0, lerpf(0.35, 0.12, ads_t), 0)
 	# keep the camera out of walls
 	var q := PhysicsRayQueryParameters3D.create(pivot, want, 1)
 	var hit := get_world_3d().direct_space_state.intersect_ray(q)
@@ -321,13 +343,15 @@ func _update_camera(delta: float, snap := false) -> void:
 		cam.global_position = want
 	else:
 		cam.global_position = cam.global_position.lerp(want, 1.0 - exp(-delta * 16.0))
-	var look := pivot + rgt * lerpf(CAM_SIDE, 0.5, ads_t) + dir * 10.0
+	var look := pivot + rgt * (lerpf(CAM_SIDE, 0.5, ads_t) + lean_t * 0.55) + dir * 10.0
 	if ads_t > 0.01:
 		look += Vector3(sin(Time.get_ticks_msec() * 0.0013), cos(Time.get_ticks_msec() * 0.0009), 0) * 0.02 * ads_t
 	if shake_mag > 0.05:
 		look += Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * shake_mag * 0.06
 		shake_mag = move_toward(shake_mag, 0.0, 60.0 * delta)
 	cam.look_at(look, Vector3.UP)
+	if absf(cam_roll) > 0.0005 or absf(lean_t) > 0.01:
+		cam.rotate_object_local(Vector3.FORWARD, cam_roll - lean_t * 0.06)
 
 func _build_weather() -> void:
 	var w := arena.make_weather(String(theme.get("weather", "none")))
@@ -350,6 +374,14 @@ func _build_hud() -> void:
 	hit_vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
 	hit_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(hit_vignette)
+	lowhp_rect = ColorRect.new()
+	lowhp_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	lowhp_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var _lm := ShaderMaterial.new()
+	_lm.shader = load("res://assets/real/fx/lowhp.gdshader")
+	lowhp_rect.material = _lm
+	lowhp_rect.visible = false
+	hud.add_child(lowhp_rect)
 
 	_hud_text("JET FUEL", Vector2(20, 16), 12, Color(1, 1, 1, 0.65))
 	fuel_fill = _bar(Vector2(20, 34), Color(0.96, 0.62, 0.10))
@@ -449,6 +481,10 @@ func _build_hud() -> void:
 	fire_button_l = HudKit.make("fire_l", hs * Settings.hud_size_of("fire_l")); hud.add_child(fire_button_l)
 	reload_button = HudKit.make("reload", hs * Settings.hud_size_of("reload")); hud.add_child(reload_button)
 	scope_button = HudKit.make("scope", hs * Settings.hud_size_of("scope")); hud.add_child(scope_button)
+	lean_l_button = _LeanBtn.new(); lean_l_button.dir = -1; hud.add_child(lean_l_button)
+	lean_r_button = _LeanBtn.new(); lean_r_button.dir = 1; hud.add_child(lean_r_button)
+	lean_l_button.anchor_to(scope_button, -1)
+	lean_r_button.anchor_to(scope_button, 1)
 	reticle = _Reticle.new()
 	reticle.set_anchors_preset(Control.PRESET_FULL_RECT)
 	reticle.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -559,6 +595,7 @@ func _equip(w: int) -> void:
 	if player.model:
 		player.model.cancel_reload()
 	player.set_weapon(w)
+	_apply_attachments()
 	mag = MAG_SIZE[w]
 	var total := int(Weapons.data(w)["ammo"])
 	ammo = -1 if total < 0 else maxi(0, total)
@@ -685,6 +722,7 @@ func _spawn_pickup(spot: int) -> void:
 	var p := Pickup3D.new()
 	p.game = self
 	p.kind = content["kind"]
+	p.attach_type = String(content.get("a", ""))
 	p.weapon_type = int(content.get("w", 0))
 	p.spot = spot
 	p.position = pickup_spots[spot]
@@ -703,6 +741,8 @@ func on_pickup(p: Pickup3D) -> void:
 			Audio.play("swap")
 		"nades":
 			grenades = min(grenades + 2, 6)
+		"attach":
+			_add_attachment(p.attach_type)
 	_update_weapon_hud()
 	Audio.play("pickup")
 	var spot: int = p.spot
@@ -718,7 +758,27 @@ func on_pickup(p: Pickup3D) -> void:
 func _physics_process(delta: float) -> void:
 	# ease firing recoil + crosshair spread back to rest
 	if recoil_off != Vector2.ZERO:
-		recoil_off = recoil_off.lerp(Vector2.ZERO, 1.0 - exp(-delta * RECOIL_RECOVER))
+		var rcv: float = float(RECOIL.get(current_weapon, RECOIL[0])["recover"])
+		recoil_off = recoil_off.lerp(Vector2.ZERO, 1.0 - exp(-delta * rcv))
+	cam_roll = lerpf(cam_roll, 0.0, 1.0 - exp(-delta * 7.0))
+	# lean: smooth toward the held direction, tilt the spine and shift the camera
+	lean_t = lerpf(lean_t, lean, 1.0 - exp(-delta * 10.0))
+	if lean_l_button and scope_button:
+		lean_l_button.anchor_to(scope_button, -1)
+		lean_r_button.anchor_to(scope_button, 1)
+	if player and player.model and player.model.has_method("set_lean"):
+		player.model.set_lean(lean_t)
+	# low-HP desaturation + heartbeat
+	if lowhp_rect and player:
+		var frac := clampf(player.health / player.max_health, 0.0, 1.0)
+		var tgt := 0.0 if player.dead else clampf((0.42 - frac) / 0.42, 0.0, 1.0)
+		lowhp_amt = lerpf(lowhp_amt, tgt, 1.0 - exp(-delta * 4.0))
+		var mt := lowhp_rect.material as ShaderMaterial
+		if mt:
+			mt.set_shader_parameter("amount", lowhp_amt)
+			mt.set_shader_parameter("pulse", 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.001 * (5.5 + 5.0 * lowhp_amt)))
+		lowhp_rect.visible = lowhp_amt > 0.01
+		Audio.set_heartbeat(lowhp_amt > 0.15, 0.9 + lowhp_amt * 0.9)
 	if crosshair and crosshair.spread > 0.01:
 		crosshair.spread = move_toward(crosshair.spread, 0.0, 70.0 * delta)
 		crosshair.queue_redraw()
@@ -963,7 +1023,7 @@ func _fire() -> void:
 	var d := Weapons.data(current_weapon)
 	var muzzle := player.muzzle_position()
 	var dir := _shoot_dir()
-	var spread_k: float = lerpf(1.0, 0.3, ads_t)
+	var spread_k: float = lerpf(1.0, 0.3, ads_t) * (0.7 if _has_attach("comp") else 1.0)
 	mag -= 1
 	player.model.recoil(2.2 if current_weapon in [Weapons.SHOTGUN, Weapons.SNIPER, Weapons.MAGNUM, Weapons.ROCKET] else 1.0)
 	player.model.fire_pose()
@@ -976,14 +1036,28 @@ func _fire() -> void:
 		_:
 			for i in int(d["pellets"]):
 				_spawn_bullet(muzzle, _spread(dir, d["spread"] * spread_k), d, true, false, local_id)
-			_muzzle_flash(muzzle, Color(1, 0.9, 0.4))
+			if _has_attach("supp"):
+				_muzzle_flash_scaled(muzzle, Color(1, 0.8, 0.4), 0.35)
+			else:
+				_muzzle_flash(muzzle, Color(1, 0.9, 0.4))
 	_play_fire_sound()
 	shake((0.5 if current_weapon != Weapons.SNIPER else 1.1) * lerpf(1.0, 0.5, ads_t))   # subtle; the view kick is recoil_off
 	# recoil kick (view climbs + slight random horizontal) + crosshair bloom, per weapon
 	var rf: float = 2.3 if current_weapon in [Weapons.SHOTGUN, Weapons.SNIPER, Weapons.MAGNUM, Weapons.ROCKET] else 1.0
 	var ads_k := lerpf(1.0, 0.45, ads_t)
-	recoil_off.y += 0.010 * rf * ads_k
-	recoil_off.x += randf_range(-0.0045, 0.0045) * rf
+	# designed recoil pattern (PUBG / CS style): deterministic climb + drift, resets after a pause
+	var rc: Dictionary = RECOIL.get(current_weapon, RECOIL[0])
+	var now := Time.get_ticks_msec() / 1000.0
+	if now - _last_shot_t > 0.4:
+		_shot_idx = 0
+	_last_shot_t = now
+	var pat: Array = rc["pat"]
+	var st: Array = pat[_shot_idx % pat.size()]
+	_shot_idx += 1
+	var comp_k := 0.65 if _has_attach("comp") else 1.0
+	recoil_off.y += float(rc["k"]) * float(st[1]) * ads_k * comp_k
+	recoil_off.x += float(rc["k"]) * float(st[0]) * 0.8 * ads_k * comp_k
+	_buzz(10)
 	if crosshair:
 		crosshair.spread = minf(crosshair.spread + 7.0 * rf * ads_k, 36.0)
 
@@ -1037,6 +1111,9 @@ func _fire_sound_name(w: int) -> String:
 
 func _play_fire_sound() -> void:
 	# one REAL recording per weapon (fps-asset-kit CC0 firearm library), natural pitch
+	if _has_attach("supp"):
+		Audio.play(_fire_sound_name(current_weapon), -13.0, 0.85)   # suppressed: quiet, lower
+		return
 	match current_weapon:
 		Weapons.UZI:
 			Audio.play("uzi", -2.0)              # PPSh SMG
@@ -1076,6 +1153,7 @@ func bullet_hit(b: Bullet3D, hit: Dictionary) -> void:
 			if b.from_player:
 				f.last_hit_wname = b.wname
 				f.last_hit_by = "You"
+				f.flinch_t = 0.45                      # suppressing fire: their aim goes wide for a moment
 				var died := f.take_hit(dmg)
 				if not b.is_flame:
 					spawn_spark(pos)
@@ -1288,6 +1366,7 @@ func _spawn_explosion(pos: Vector3) -> void:
 		var d := player.global_position.distance_to(pos)
 		if d < 11.0:
 			shake(6.0 * clampf(1.0 - d / 11.0, 0.0, 1.0))
+			_buzz(70)
 	Audio.play_at("explosion", pos, 4.0, 1.0, 120.0)
 
 ## Generic one-shot sprite particle burst (billboard quads), additive or alpha.
@@ -1531,9 +1610,12 @@ func damage_local_player(dmg: float, killer_id: int, _pos: Vector3, from_dir := 
 	Audio.play("hit")
 	# FF/PUBG style: being shot does NOT shake the world — the red arc + vignette say where
 	# it came from; only a tiny deterministic aim punch (flinch) nudges the view
+	_buzz(35)
 	if not died:
 		recoil_off.y += 0.0025
-		recoil_off.x += (0.0018 if from_dir.dot(_cam_right()) > 0.0 else -0.0018)
+		var side := 1.0 if from_dir.dot(_cam_right()) > 0.0 else -1.0
+		recoil_off.x += 0.0018 * side
+		cam_roll = -side * 0.045                     # brief view tilt away from the hit
 	else:
 		shake(3.0)
 	if is_mp:
@@ -2191,8 +2273,12 @@ func _run_bot_ai(b: Fighter, delta: float) -> void:
 	b.set_aim(yaw, pitch)
 
 	b.fire_t -= delta
+	b.flinch_t = maxf(0.0, b.flinch_t - delta)
 	if b.fire_t <= 0.0 and not player.dead and dist < float(prof["range"]) and not match_over and b.los:
-		var dir := _spread(ad.normalized(), float(prof["aimError"]))
+		var dir := _spread(ad.normalized(), float(prof["aimError"]) * (1.0 + 5.0 * b.flinch_t))
+		if b.flinch_t > 0.25:
+			b.fire_t = 0.15                             # flinch: hold fire a beat
+			return
 		b.model.recoil(0.8)
 		for i in int(wd["pellets"]):
 			_spawn_bullet(m, _spread(dir, float(wd["spread"]) * 0.6), wd, false, false, 0, b.name_text)
@@ -2216,10 +2302,19 @@ func _input(event: InputEvent) -> void:
 			Audio.play("swap")
 		return
 
+	if event is InputEventKey and (event.keycode == KEY_Q or event.keycode == KEY_E) and not event.echo:
+		lean = (-1.0 if event.keycode == KEY_Q else 1.0) if event.pressed else 0.0
+		return
 	var vp := get_viewport().get_visible_rect().size
 	if event is InputEventScreenTouch:
 		using_touch = true
 		if event.pressed:
+			if lean_l_button and _btn_rect(lean_l_button, 8.0).has_point(event.position):
+				lean_ids[event.index] = -1.0; lean = -1.0
+				return
+			if lean_r_button and _btn_rect(lean_r_button, 8.0).has_point(event.position):
+				lean_ids[event.index] = 1.0; lean = 1.0
+				return
 			if _btn_rect(nade_button, 14.0).has_point(event.position):
 				nade_id = event.index
 				nade_aim = Vector2.ZERO
@@ -2247,6 +2342,9 @@ func _input(event: InputEvent) -> void:
 			elif not move_side and look_id == -1:
 				look_id = event.index; look_last = event.position
 		else:
+			if lean_ids.has(event.index):
+				lean_ids.erase(event.index)
+				lean = 0.0 if lean_ids.is_empty() else float(lean_ids.values()[0])
 			if event.index == nade_id:
 				_release_nade()
 			elif event.index == jump_id:
@@ -2326,6 +2424,7 @@ class _Reticle:
 func _hit_feedback(pos: Vector3, dmg: float, head: bool, killed: bool) -> void:
 	if crosshair:
 		crosshair.hit(head or killed)
+	_buzz(30 if (head or killed) else 16)
 	Audio.play("hitmarker", -5.0 if not head else -2.0, 1.55 if head else 1.25)
 	_dmg_number(pos + Vector3(0, 0.25, 0), dmg, head)
 
@@ -2353,6 +2452,7 @@ func _dmg_number(pos: Vector3, dmg: float, head: bool) -> void:
 func _register_kill(victim: String, wname: String, head: bool) -> void:
 	_kill_feed("You", victim, wname, head)
 	_bump_kills()
+	_buzz(45)
 	_streak += 1
 	var now := Time.get_ticks_msec() / 1000.0
 	_multi = _multi + 1 if now - _multi_t < 3.5 else 1
@@ -2569,6 +2669,60 @@ class _Compass:
 				draw_line(Vector2(x, 14), Vector2(x, 20), Color(1, 1, 1, 0.5), 1.0)
 		draw_colored_polygon(PackedVector2Array([Vector2(w * 0.5, 1), Vector2(w * 0.5 - 5, -6), Vector2(w * 0.5 + 5, -6)]), Color(1, 0.8, 0.3))
 		draw_string(preload("res://assets/fonts/Rajdhani-Bold.ttf"), Vector2(w * 0.5 - 14, size.y + 12), "%d°" % int(posmod(int(heading), 360)), HORIZONTAL_ALIGNMENT_CENTER, 28, 11, Color(1, 1, 1, 0.75))
+
+## Attachments picked up for the current weapon (visual on the gun + stat effects).
+func _add_attachment(a: String) -> void:
+	if a == "":
+		return
+	if not attachments.has(current_weapon):
+		attachments[current_weapon] = {}
+	attachments[current_weapon][a] = true
+	_apply_attachments()
+	_announce({"supp": "SUPPRESSOR", "comp": "COMPENSATOR", "scope": "RED DOT"}.get(a, "ATTACHMENT"), Color(0.5, 0.85, 1.0))
+
+func _apply_attachments() -> void:
+	if not player or not player.model or not player.model.gun:
+		return
+	for a in attachments.get(current_weapon, {}):
+		player.model.gun.add_attachment(a)
+
+func _has_attach(a: String) -> bool:
+	return bool(attachments.get(current_weapon, {}).get(a, false))
+
+## Haptic tap (phones); off via Settings.
+func _buzz(ms: int) -> void:
+	if Settings.haptics and OS.has_feature("mobile"):
+		Input.vibrate_handheld(ms)
+
+func _muzzle_flash_scaled(pos: Vector3, col: Color, k: float) -> void:
+	var before := get_child_count()
+	_muzzle_flash(pos, col)
+	if get_child_count() > before:
+		var f := get_child(before)
+		if f is Node3D:
+			(f as Node3D).scale = Vector3(k, k, k)
+
+## Lean / peek buttons beside SCOPE (hold to lean; PUBG-style Q/E on keyboard).
+class _LeanBtn:
+	extends Control
+	var dir := 1
+	var held := false
+	func anchor_to(scope: Control, side: int) -> void:
+		size = Vector2(46, 46)
+		var r := HudKit.rect(scope, 0.0) if scope.has_meta("kind") else scope.get_global_rect()
+		position = Vector2(r.position.x - 60 + (0 if side < 0 else 0), r.position.y + (r.size.y * 0.5 - 23) + side * 30)
+		if side < 0:
+			position = Vector2(r.position.x - 62, r.position.y - 14)
+		else:
+			position = Vector2(r.position.x - 62, r.position.y + r.size.y - 32)
+	func _draw() -> void:
+		var c := size * 0.5
+		draw_circle(c, 22, Color(0, 0, 0, 0.42))
+		draw_arc(c, 22, 0, TAU, 32, Color(1, 1, 1, 0.55), 1.5, true)
+		var s := float(dir)
+		var pts := PackedVector2Array([c + Vector2(-6 * s, -9), c + Vector2(6 * s, 0), c + Vector2(-6 * s, 9)])
+		draw_polyline(pts, Color(1, 1, 1, 0.95), 3.0, true)
+		draw_string(preload("res://assets/fonts/Rajdhani-Bold.ttf"), c + Vector2(-16, 32), "LEAN", HORIZONTAL_ALIGNMENT_CENTER, 32, 10, Color(1, 1, 1, 0.7))
 
 class _ScopeOverlay:
 	extends Control
