@@ -83,7 +83,7 @@ static func _outpost() -> Dictionary:
 			"sandbag": "sandbag_fabric", "brick": "brick", "roof": "roof_tiles"},
 		"real_place": [
 			{"model": "brick_home", "pos": Vector3(-34, 0, 20), "yaw": 0.5, "len": 15.0, "collide": "trimesh"},
-			{"model": "container_home", "pos": Vector3(34, 0, -20), "yaw": -2.2, "len": 17.0, "collide": "box", "sink": 2.6},
+			{"model": "container_home", "pos": Vector3(34, 0, -20), "yaw": -2.2, "len": 17.0, "collide": "trimesh", "sink": 2.6},
 			{"model": "brick_home", "pos": Vector3(2, 0, -28), "yaw": 0.1, "len": 14.0, "collide": "trimesh"},
 			{"model": "shipping_containers", "pos": Vector3(-10, 0, -9), "yaw": 0.0, "scale": 0.7, "collide": "trimesh"},
 			{"model": "shipping_containers", "pos": Vector3(11, 0, 9), "yaw": PI, "scale": 0.7, "collide": "trimesh"},
@@ -371,11 +371,9 @@ static func _green_hills() -> Dictionary:
 		"real_trees": [{"model": "birch_tree", "h": 9.0}, {"model": "tree_gn", "h": 9.5}, {"model": "birch_tree", "h": 7.0},
 			{"model": "realistic_hd_sour_orange_1630", "h": 4.5}],
 				"real_place": [
-			{"model": "free_london_kinnaird_house", "pos": Vector3(0, 0, -26), "yaw": 0.0, "len": 24.0, "collide": "box"},
-			{"model": "school_house_7_bedford_nh__kendall_shoe_1847", "pos": Vector3(-34, 0, 16), "yaw": 1.3, "len": 18.0, "collide": "box", "sink": 5.0},
-			{"model": "gta_6_prison_tower__guard_tower__watchtower", "pos": Vector3(14, 0, 6), "yaw": 0.6, "scale": 1.6, "collide": "box"},
-			{"model": "low_poly_generic_green_house", "pos": Vector3(30, 0, -22), "yaw": -1.1, "len": 13.0, "collide": "box"},
-			{"model": "low_poly_generic_green_house", "pos": Vector3(-30, 0, -20), "yaw": 2.2, "len": 11.0, "collide": "box"},
+			{"model": "free_london_kinnaird_house", "pos": Vector3(0, 0, -26), "yaw": 0.0, "len": 24.0, "collide": "trimesh"},
+			{"model": "school_house_7_bedford_nh__kendall_shoe_1847", "pos": Vector3(-34, 0, 16), "yaw": 1.3, "len": 18.0, "collide": "trimesh", "sink": 5.0},
+			{"model": "gta_6_prison_tower__guard_tower__watchtower", "pos": Vector3(14, 0, 6), "yaw": 0.6, "scale": 1.6, "collide": "trimesh"},
 		],
 		"real_props": ["rock_07", "rock_09", "namaqualand_boulder_03", "namaqualand_boulder_04",
 			"wooden_crate_01", "Barrel_01"],

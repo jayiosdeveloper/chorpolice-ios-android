@@ -108,6 +108,8 @@ var fuel_fill: ColorRect
 var health_fill: ColorRect
 var weapon_label: Label
 var kills_label: Label
+const FONT_UI: Font = preload("res://assets/fonts/Rajdhani-Bold.ttf")
+const FONT_DISPLAY: Font = preload("res://assets/fonts/RussoOne-Regular.ttf")
 var timer_label: Label
 var nade_button: Control
 var jump_button: Control
@@ -367,14 +369,19 @@ func _build_hud() -> void:
 	weapon_label.add_child(reload_bar)
 
 	kills_label = Label.new()
-	kills_label.add_theme_font_size_override("font_size", 18)
+	kills_label.add_theme_font_override("font", FONT_DISPLAY)
+	kills_label.add_theme_font_size_override("font_size", 24)
+	kills_label.add_theme_color_override("font_color", Color(1.0, 0.86, 0.45))
+	kills_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+	kills_label.add_theme_constant_override("outline_size", 7)
 	kills_label.anchor_left = 0.0; kills_label.anchor_right = 1.0
 	kills_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	kills_label.offset_top = 14
 	hud.add_child(kills_label)
 
 	timer_label = Label.new()
-	timer_label.add_theme_font_size_override("font_size", 22)
+	timer_label.add_theme_font_override("font", FONT_UI)
+	timer_label.add_theme_font_size_override("font_size", 26)
 	timer_label.anchor_left = 0.0; timer_label.anchor_right = 1.0
 	timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	timer_label.offset_top = 38
@@ -413,6 +420,7 @@ func _build_hud() -> void:
 	compass.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(compass)
 	announce_label = Label.new()
+	announce_label.add_theme_font_override("font", FONT_DISPLAY)
 	announce_label.add_theme_font_size_override("font_size", 34)
 	announce_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
 	announce_label.add_theme_constant_override("outline_size", 8)
@@ -498,6 +506,7 @@ func _build_hud() -> void:
 
 func _hud_text(txt: String, pos: Vector2, fsize: int, col: Color) -> Label:
 	var l := Label.new()
+	l.add_theme_font_override("font", FONT_UI)
 	l.text = txt
 	l.position = pos
 	l.add_theme_font_size_override("font_size", fsize)
@@ -1786,7 +1795,7 @@ func _update_score_hud() -> void:
 	elif is_mp and MatchCfg.mode == 1:
 		kills_label.text = "A %d  —  %d B" % [_team_kills(0), _team_kills(1)]
 	else:
-		kills_label.text = "Kills %d" % kills
+		kills_label.text = "☠  %d" % kills
 
 func _team_captures(t: int) -> int:
 	var total := my_captures if MatchCfg.local_team == t else 0
@@ -2324,6 +2333,7 @@ func _hit_feedback(pos: Vector3, dmg: float, head: bool, killed: bool) -> void:
 func _dmg_number(pos: Vector3, dmg: float, head: bool) -> void:
 	var l := Label3D.new()
 	l.text = "-%d" % int(round(dmg))
+	l.font = FONT_DISPLAY
 	l.font_size = 88 if head else 64
 	l.pixel_size = 0.005
 	l.outline_size = 12
@@ -2342,6 +2352,7 @@ func _dmg_number(pos: Vector3, dmg: float, head: bool) -> void:
 ## A kill by the local player: feed entry + streak / multi-kill announcer.
 func _register_kill(victim: String, wname: String, head: bool) -> void:
 	_kill_feed("You", victim, wname, head)
+	_bump_kills()
 	_streak += 1
 	var now := Time.get_ticks_msec() / 1000.0
 	_multi = _multi + 1 if now - _multi_t < 3.5 else 1
@@ -2358,6 +2369,19 @@ func _register_kill(victim: String, wname: String, head: bool) -> void:
 		_announce("KILLING SPREE", Color(1.0, 0.8, 0.3))
 	elif _streak == 10:
 		_announce("UNSTOPPABLE", Color(1.0, 0.5, 0.2))
+
+## Kill counter pops (scale bounce + flash) on every kill.
+func _bump_kills() -> void:
+	if not kills_label:
+		return
+	kills_label.text = "☠  %d" % kills
+	kills_label.pivot_offset = kills_label.size * 0.5
+	kills_label.scale = Vector2(1.45, 1.45)
+	kills_label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.25))
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(kills_label, "scale", Vector2.ONE, 0.32).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_method(func(c: Color): kills_label.add_theme_color_override("font_color", c), Color(1.0, 0.35, 0.25), Color(1.0, 0.86, 0.45), 0.5)
 
 func _kill_feed(killer: String, victim: String, wname: String, head: bool) -> void:
 	if killfeed:
@@ -2398,6 +2422,7 @@ class _KillFeed:
 		_box.size = Vector2(300, 0)
 	func add(killer: String, victim: String, wname: String, head: bool) -> void:
 		var l := Label.new()
+		l.add_theme_font_override("font", load("res://assets/fonts/Rajdhani-Bold.ttf"))
 		l.text = "%s  ▶  %s   [%s]%s" % [killer, victim, wname if wname != "" else "?", "  ☠" if head else ""]
 		l.add_theme_font_size_override("font_size", 14)
 		l.add_theme_color_override("font_color", Color(1.0, 0.35, 0.3) if killer == "You" and false else (Color(1, 0.9, 0.6) if killer == "You" else Color(1, 0.6, 0.55)))
@@ -2406,6 +2431,13 @@ class _KillFeed:
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_box.add_child(l)
+		l.modulate.a = 0.0
+		l.pivot_offset = Vector2(300, 10)
+		l.scale = Vector2(1.25, 1.25)
+		var ti := l.create_tween()
+		ti.set_parallel(true)
+		ti.tween_property(l, "modulate:a", 1.0, 0.16)
+		ti.tween_property(l, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 		while _box.get_child_count() > 5:
 			_box.get_child(0).queue_free()
 			_box.remove_child(_box.get_child(0))
@@ -2500,7 +2532,7 @@ class _Minimap:
 		var fwd: Vector3 = game._cam_dir(); fwd.y = 0; fwd = fwd.normalized()
 		var rgt: Vector3 = game._cam_right()
 		var n := Vector2(Vector3.FORWARD.dot(rgt), -Vector3.FORWARD.dot(fwd)).normalized() * (R - 9.0)
-		draw_string(ThemeDB.fallback_font, c + n + Vector2(-4, 5), "N", HORIZONTAL_ALIGNMENT_CENTER, -1, 12, Color(1, 1, 1, 0.8))
+		draw_string(preload("res://assets/fonts/Rajdhani-Bold.ttf"), c + n + Vector2(-4, 5), "N", HORIZONTAL_ALIGNMENT_CENTER, -1, 12, Color(1, 1, 1, 0.8))
 
 ## PUBG-style heading strip at the top centre.
 class _Compass:
@@ -2532,11 +2564,11 @@ class _Compass:
 			var x := w * 0.5 + d * px_per_deg
 			var key := int(posmod(deg, 360))
 			if labels.has(key):
-				draw_string(ThemeDB.fallback_font, Vector2(x - 8, 16), labels[key], HORIZONTAL_ALIGNMENT_CENTER, 16, 12, Color(1, 1, 1, 0.9))
+				draw_string(preload("res://assets/fonts/Rajdhani-Bold.ttf"), Vector2(x - 8, 16), labels[key], HORIZONTAL_ALIGNMENT_CENTER, 16, 12, Color(1, 1, 1, 0.9))
 			else:
 				draw_line(Vector2(x, 14), Vector2(x, 20), Color(1, 1, 1, 0.5), 1.0)
 		draw_colored_polygon(PackedVector2Array([Vector2(w * 0.5, 1), Vector2(w * 0.5 - 5, -6), Vector2(w * 0.5 + 5, -6)]), Color(1, 0.8, 0.3))
-		draw_string(ThemeDB.fallback_font, Vector2(w * 0.5 - 14, size.y + 12), "%d°" % int(posmod(int(heading), 360)), HORIZONTAL_ALIGNMENT_CENTER, 28, 11, Color(1, 1, 1, 0.75))
+		draw_string(preload("res://assets/fonts/Rajdhani-Bold.ttf"), Vector2(w * 0.5 - 14, size.y + 12), "%d°" % int(posmod(int(heading), 360)), HORIZONTAL_ALIGNMENT_CENTER, 28, 11, Color(1, 1, 1, 0.75))
 
 class _ScopeOverlay:
 	extends Control
@@ -2560,5 +2592,5 @@ class _ScopeOverlay:
 			draw_circle(c + Vector2(0, o), 2.5, line)
 			draw_circle(c + Vector2(0, -o), 2.5, line)
 		draw_circle(c, 3.0, Color(1.0, 0.25, 0.2))
-		var f := ThemeDB.fallback_font
+		var f = preload("res://assets/fonts/Rajdhani-Bold.ttf")
 		draw_string(f, c + Vector2(R * 0.55, -R * 0.62), "8x", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.7, 0.9, 1.0, 0.7))

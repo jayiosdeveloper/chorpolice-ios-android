@@ -65,6 +65,14 @@ var model: HumanModel
 var jet: CPUParticles3D
 var _jet_light: OmniLight3D      # warm glow while thrusting
 var hp_bar: MeshInstance3D
+var _ring: MeshInstance3D              # circular HP gauge
+var _ring_mat: ShaderMaterial
+var _pct: Label3D                      # "%" inside the ring
+var _hp_tw: Tween
+var _ov_tw: Tween
+var _hp_shown := 1.0
+static var _FONT_UI: Font = load("res://assets/fonts/Rajdhani-Bold.ttf")
+static var _FONT_DISPLAY: Font = load("res://assets/fonts/RussoOne-Regular.ttf")
 var hp_bg: MeshInstance3D
 var name_label: Label3D
 var overlay: Node3D
@@ -405,36 +413,60 @@ func _flash() -> void:
 
 func _build_overlay() -> void:
 	overlay = Node3D.new()
-	overlay.position = Vector3(0, HEIGHT + 0.42, 0)
+	overlay.position = Vector3(0, HEIGHT + 0.5, 0)
 	add_child(overlay)
-
-	hp_bg = _quad(Vector2(0.9, 0.1), Color(0, 0, 0, 0.55))
-	overlay.add_child(hp_bg)
-	hp_bar = _quad(Vector2(0.9, 0.1), Color(0.3, 0.85, 0.4))
-	hp_bar.position.z = 0.001
-	overlay.add_child(hp_bar)
-
+	# circular HP gauge: shader ring that depletes clockwise, dark disc with the % inside
+	_ring = MeshInstance3D.new()
+	var q := QuadMesh.new()
+	q.size = Vector2(0.44, 0.44)
+	var sm := ShaderMaterial.new()
+	sm.shader = load("res://assets/real/fx/hp_ring.gdshader")
+	sm.render_priority = 2
+	q.material = sm
+	_ring.mesh = q
+	_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	overlay.add_child(_ring)
+	_ring_mat = sm
+	_pct = Label3D.new()
+	_pct.font = _FONT_UI
+	_pct.font_size = 46
+	_pct.pixel_size = 0.0034
+	_pct.outline_size = 0
+	_pct.no_depth_test = true
+	_pct.render_priority = 3
+	_pct.position = Vector3(0, 0, 0.003)
+	_pct.modulate = Color(1, 1, 1, 0.98)
+	overlay.add_child(_pct)
 	name_label = Label3D.new()
 	name_label.text = name_text
-	name_label.font_size = 40
-	name_label.pixel_size = 0.006
-	name_label.outline_size = 8
-	name_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	name_label.font = _FONT_DISPLAY
+	name_label.font_size = 30
+	name_label.pixel_size = 0.0055
+	name_label.outline_size = 10
+	name_label.outline_modulate = _team_outline()
 	name_label.no_depth_test = true
-	name_label.position = Vector3(0, 0.22, 0)
-	name_label.modulate = Color(1, 1, 1, 0.95)
+	name_label.render_priority = 3
+	name_label.position = Vector3(0, 0.33, 0.002)
+	name_label.modulate = Color(1, 1, 1, 0.98)
 	overlay.add_child(name_label)
-	_update_hp()
+	_update_hp(false)
 
-func _quad(size: Vector2, col: Color) -> MeshInstance3D:
+func _team_outline() -> Color:
+	if is_remote:
+		return Color(0.95, 0.5, 0.15, 1.0)
+	if is_bot or team == "enemy":
+		return Color(0.85, 0.15, 0.12, 1.0)
+	return Color(0.15, 0.6, 0.95, 1.0)
+
+func _quad(size: Vector2, col: Color, offset := Vector3.ZERO) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	var q := QuadMesh.new()
 	q.size = size
+	q.center_offset = offset
 	var m := StandardMaterial3D.new()
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.albedo_color = col
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
 	m.no_depth_test = true
 	m.render_priority = 2
 	q.material = m
@@ -447,12 +479,56 @@ func set_name_text(s: String) -> void:
 	if name_label:
 		name_label.text = s
 
-func _update_hp() -> void:
-	if not hp_bar:
+func _update_hp(animate := true) -> void:
+	if not _ring_mat:
 		return
 	var frac := clampf(health / max_health, 0.0, 1.0)
-	hp_bar.scale.x = maxf(frac, 0.001)
-	hp_bar.position.x = -0.45 * (1.0 - frac)
-	var m := hp_bar.mesh.surface_get_material(0) as StandardMaterial3D
-	if m:
-		m.albedo_color = Color(0.3, 0.85, 0.4) if frac > 0.5 else (Color(0.95, 0.75, 0.2) if frac > 0.25 else Color(0.95, 0.3, 0.25))
+	var col: Color
+	if frac > 0.35:
+		col = Color(0.3, 0.9, 0.45).lerp(Color(0.95, 0.78, 0.2), clampf((0.65 - frac) / 0.3, 0.0, 1.0))
+	else:
+		col = Color(0.95, 0.78, 0.2).lerp(Color(0.95, 0.25, 0.2), clampf((0.35 - frac) / 0.2, 0.0, 1.0))
+	if _hp_tw:
+		_hp_tw.kill()
+	if not animate or not is_inside_tree():
+		_hp_shown = frac
+		_ring_mat.set_shader_parameter("fill", frac)
+		_ring_mat.set_shader_parameter("col", col)
+		_pct.text = "%d" % int(round(frac * 100.0))
+		return
+	# ring drains smoothly, % counts down, gauge pulses and the name flashes on damage
+	var from_col: Color = _ring_mat.get_shader_parameter("col")
+	_hp_tw = create_tween()
+	_hp_tw.set_parallel(true)
+	_hp_tw.tween_method(func(v: float) -> void:
+		_hp_shown = v
+		_ring_mat.set_shader_parameter("fill", v)
+		_pct.text = "%d" % int(round(v * 100.0)), _hp_shown, frac, 0.45).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_hp_tw.tween_method(func(c: Color) -> void: _ring_mat.set_shader_parameter("col", c), from_col, col, 0.4)
+	if overlay:
+		if _ov_tw: _ov_tw.kill()
+		overlay.scale = Vector3(1.22, 1.22, 1.22)
+		name_label.modulate = Color(1.0, 0.45, 0.4, 1.0)
+		_pct.modulate = Color(1.0, 0.5, 0.45, 1.0)
+		_ov_tw = create_tween()
+		_ov_tw.set_parallel(true)
+		_ov_tw.tween_property(overlay, "scale", Vector3.ONE, 0.26).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		_ov_tw.tween_property(name_label, "modulate", Color(1, 1, 1, 0.98), 0.35)
+		_ov_tw.tween_property(_pct, "modulate", Color(1, 1, 1, 0.98), 0.35)
+
+## Gauge faces the camera and fades with distance so far players don't clutter the view.
+func _process(_delta: float) -> void:
+	if not overlay or not overlay.visible or not _ring_mat:
+		return
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var to_cam := cam.global_position - overlay.global_position
+	if to_cam.length_squared() > 0.0001:
+		overlay.look_at(cam.global_position, Vector3.UP)
+		overlay.rotate_object_local(Vector3.UP, PI)
+	var d := cam.global_position.distance_to(global_position)
+	var a := clampf(1.0 - (d - 14.0) / 34.0, 0.3, 1.0)
+	name_label.modulate.a = a
+	_pct.modulate.a = a
+	_ring_mat.set_shader_parameter("alpha_mul", a)

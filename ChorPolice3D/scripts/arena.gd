@@ -881,12 +881,37 @@ func _place_prop(e: Dictionary, at: Vector3, yaw := -1.0) -> void:
 				cyl.radius = maxf(aabb.size.x, aabb.size.z) * 0.5
 				cyl.height = maxf(aabb.size.y, 0.4)
 				cs.shape = cyl
-			else:
+				cs.position = Vector3(0, aabb.size.y / 2.0, 0)
+			elif e.get("kind", "") in ["box", "crate"]:
 				var bs := BoxShape3D.new()
-				bs.size = Vector3(maxf(aabb.size.x, 0.4), maxf(aabb.size.y, 0.4), maxf(aabb.size.z, 0.4))
+				bs.size = Vector3(aabb.size.x, aabb.size.y, aabb.size.z)
 				cs.shape = bs
-				cs.rotation.y = inst.rotation.y
-			cs.position = Vector3(0, aabb.size.y / 2.0, 0)
+				cs.position = Vector3(0, aabb.size.y / 2.0, 0)
+			else:
+				# rocks / boulders / stumps: hull that follows the actual shape, so you can walk
+				# right up to it instead of hitting an invisible box
+				var pts := PackedVector3Array()
+				var xf_inv: Transform3D = inst.global_transform.affine_inverse() if inst.is_inside_tree() else Transform3D.IDENTITY
+				for mi2 in _all_mesh_instances(inst):
+					if mi2.mesh:
+						var rel: Transform3D = xf_inv * mi2.global_transform if mi2.is_inside_tree() else mi2.transform
+						for si in mi2.mesh.get_surface_count():
+							var arr: Array = mi2.mesh.surface_get_arrays(si)
+							if arr.size() > Mesh.ARRAY_VERTEX and arr[Mesh.ARRAY_VERTEX] != null:
+								var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+								var step: int = maxi(1, verts.size() / 400)
+								for vi in range(0, verts.size(), step):
+									pts.append((rel * verts[vi]) * inst.scale)
+				if pts.size() >= 8:
+					var hull := ConvexPolygonShape3D.new()
+					hull.points = pts
+					cs.shape = hull
+					cs.rotation.y = inst.rotation.y
+				else:
+					var bs := BoxShape3D.new()
+					bs.size = Vector3(aabb.size.x, aabb.size.y, aabb.size.z)
+					cs.shape = bs
+					cs.position = Vector3(0, aabb.size.y / 2.0, 0)
 			body.add_child(cs)
 			add_child(body)
 
