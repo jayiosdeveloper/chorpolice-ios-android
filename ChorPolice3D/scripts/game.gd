@@ -126,6 +126,14 @@ var ads_t := 0.0
 var next_button: Button
 var center_label: Label
 var crosshair                       # _Crosshair (dynamic); untyped for inner-class access
+var killfeed                        # _KillFeed
+var dmg_ind                         # _DmgIndicator (red arcs toward attackers)
+var minimap                         # _Minimap radar
+var compass                         # _Compass heading strip
+var announce_label: Label
+var _streak := 0                    # kills without dying
+var _multi := 0                     # kills within a short window
+var _multi_t := 0.0
 var pause_layer: CanvasLayer
 var pause_box: VBoxContainer
 var hit_vignette: ColorRect
@@ -262,6 +270,16 @@ func _cam_dir() -> Vector3:
 class _Crosshair:
 	extends Control
 	var spread := 0.0
+	var hit_t := 0.0                     # hit-marker flash timer
+	var hit_strong := false              # red (kill / headshot) instead of white
+	func hit(strong: bool) -> void:
+		hit_t = 0.22
+		hit_strong = strong
+		queue_redraw()
+	func _process(delta: float) -> void:
+		if hit_t > 0.0:
+			hit_t -= delta
+			queue_redraw()
 	func _draw() -> void:
 		var ctr := size / 2.0
 		var gap := 5.0 + spread
@@ -273,6 +291,16 @@ class _Crosshair:
 			draw_line(ctr + d * gap + Vector2(1, 1), ctr + d * (gap + ln) + Vector2(1, 1), sh, th)
 			draw_line(ctr + d * gap, ctr + d * (gap + ln), col, th)
 		draw_circle(ctr, 1.7, col)
+		if hit_t > 0.0:
+			# FF/PUBG hit marker: four diagonal ticks that flash and shrink
+			var k := clampf(hit_t / 0.22, 0.0, 1.0)
+			var hc := (Color(1.0, 0.2, 0.15, k) if hit_strong else Color(1, 1, 1, k))
+			var g2 := 6.0 + (1.0 - k) * 4.0
+			var l2 := 9.0 if hit_strong else 7.0
+			for d in [Vector2(1, 1), Vector2(-1, 1), Vector2(1, -1), Vector2(-1, -1)]:
+				var dn: Vector2 = (d as Vector2).normalized()
+				draw_line(ctr + dn * g2 + Vector2(1, 1), ctr + dn * (g2 + l2) + Vector2(1, 1), Color(0, 0, 0, 0.5 * k), 3.0)
+				draw_line(ctr + dn * g2, ctr + dn * (g2 + l2), hc, 3.0)
 
 func _cam_right() -> Vector3:
 	return Vector3(cos(cam_yaw), 0.0, -sin(cam_yaw))
@@ -367,6 +395,31 @@ func _build_hud() -> void:
 	crosshair.set_anchors_preset(Control.PRESET_FULL_RECT)
 	crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(crosshair)
+	killfeed = _KillFeed.new()
+	killfeed.set_anchors_preset(Control.PRESET_FULL_RECT)
+	killfeed.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(killfeed)
+	dmg_ind = _DmgIndicator.new()
+	dmg_ind.game = self
+	dmg_ind.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dmg_ind.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(dmg_ind)
+	minimap = _Minimap.new()
+	minimap.game = self
+	minimap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(minimap)
+	compass = _Compass.new()
+	compass.game = self
+	compass.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(compass)
+	announce_label = Label.new()
+	announce_label.add_theme_font_size_override("font_size", 34)
+	announce_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+	announce_label.add_theme_constant_override("outline_size", 8)
+	announce_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	announce_label.modulate.a = 0.0
+	announce_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(announce_label)
 
 	if not is_mp:
 		pass   # map is chosen before the match (lobby map picker); no mid-game switching
@@ -933,7 +986,7 @@ func _fire() -> void:
 	if mag <= 0:
 		_start_reload()
 
-func _spawn_bullet(pos: Vector3, dir: Vector3, d: Dictionary, from_player: bool, flame: bool, owner_id := 0) -> void:
+func _spawn_bullet(pos: Vector3, dir: Vector3, d: Dictionary, from_player: bool, flame: bool, owner_id := 0, shooter := "") -> void:
 	var b := Bullet3D.new()
 	b.game = self
 	b.from_player = from_player
@@ -941,6 +994,8 @@ func _spawn_bullet(pos: Vector3, dir: Vector3, d: Dictionary, from_player: bool,
 	b.dmg = d["dmg"]
 	b.life = d["life"]
 	b.is_flame = flame
+	b.wname = String(d.get("name", ""))
+	b.shooter = shooter if shooter != "" else ("You" if from_player else "Enemy")
 	b.vel = dir * float(d["speed"]) * PX_TO_M * (0.6 if flame else 1.0)
 	b.position = pos
 	add_child(b)
@@ -1001,18 +1056,26 @@ func bullet_hit(b: Bullet3D, hit: Dictionary) -> void:
 	var pos: Vector3 = hit["position"]
 	if col is Fighter:
 		var f := col as Fighter
+		# head zone: the top ~30 cm of the body (2x damage, red numbers, announcer)
+		var head := (pos.y - f.global_position.y) > 1.52 and not b.is_flame
+		var dmg := b.dmg * (2.0 if head else 1.0)
 		if f.is_remote:
 			spawn_spark(pos)                       # cosmetic; the victim reports damage
+			if b.from_player:
+				_hit_feedback(pos, dmg, head, false)
 		elif f.is_bot:
 			if b.from_player:
-				var died := f.take_hit(b.dmg)
+				f.last_hit_wname = b.wname
+				f.last_hit_by = "You"
+				var died := f.take_hit(dmg)
 				if not b.is_flame:
 					spawn_spark(pos)
-				Audio.play("hit", -6.0)
+				_hit_feedback(pos, dmg, head, died)
 				if died:
 					shake(4.0)
+					_register_kill(f.name_text, b.wname, head)
 		elif f == player:
-			damage_local_player(b.dmg, b.owner_id, pos)
+			damage_local_player(dmg, b.owner_id, pos, -b.vel.normalized(), b.shooter, b.wname)
 	elif not b.is_flame:
 		spawn_impact(pos, hit.get("normal", Vector3.UP), col)
 
@@ -1422,7 +1485,12 @@ func explode(pos: Vector3, radius: float, dmg: float, owner_id := 0) -> void:
 		var dp := (player.global_position + Vector3(0, 0.9, 0)).distance_to(pos)
 		if dp < radius:
 			var amount := dmg * maxf(0.45, 1.0 - dp / radius)
+			if dmg_ind:
+				dmg_ind.add((pos - player.global_position).normalized())
 			var died := player.take_hit(amount)
+			if died:
+				_kill_feed("Enemy", "You", "GRENADE", false)
+				_streak = 0
 			hit_vignette.color.a = 0.45
 			shake(12.0 if died else 7.0)
 			if is_mp:
@@ -1433,16 +1501,26 @@ func explode(pos: Vector3, radius: float, dmg: float, owner_id := 0) -> void:
 			continue
 		var db: float = (b.global_position + Vector3(0, 0.9, 0)).distance_to(pos)
 		if db < radius:
-			b.take_hit(dmg * maxf(0.45, 1.0 - db / radius))
+			var a := dmg * maxf(0.45, 1.0 - db / radius)
+			var died: bool = b.take_hit(a)
+			if owner_id == local_id or owner_id == 0:
+				_dmg_number(b.global_position + Vector3(0, 1.7, 0), a, false)
+				if died:
+					_register_kill(b.name_text, "GRENADE", false)
 
 func _is_friendly(shooter_id: int) -> bool:
 	return is_mp and MatchCfg.mode >= 1 and shooter_id != local_id \
 		and int(peer_teams.get(shooter_id, -1)) == MatchCfg.local_team
 
-func damage_local_player(dmg: float, killer_id: int, _pos: Vector3) -> void:
+func damage_local_player(dmg: float, killer_id: int, _pos: Vector3, from_dir := Vector3.ZERO, shooter := "", wname := "") -> void:
 	if player.dead or match_over or _is_friendly(killer_id):
 		return
+	if dmg_ind and from_dir.length_squared() > 0.001:
+		dmg_ind.add(from_dir)
 	var died := player.take_hit(dmg)
+	if died:
+		_kill_feed(shooter if shooter != "" else "Enemy", "You", wname, false)
+		_streak = 0
 	hit_vignette.color.a = minf(0.5, hit_vignette.color.a + 0.25)
 	Audio.play("hit")
 	shake(6.0 if died else 2.5)
@@ -1520,8 +1598,7 @@ func shake(mag: float) -> void:
 func _on_player_died() -> void:
 	_set_ads(false)
 	_drop_flag_on_death()
-	_spawn_explosion(player.global_position + Vector3(0, 0.9, 0))
-	shake(12.0)
+	shake(8.0)
 	get_tree().create_timer(1.8).timeout.connect(_do_player_respawn)
 
 func _do_player_respawn() -> void:
@@ -1663,7 +1740,7 @@ func _remote_fire(sender: int, msg: Dictionary) -> void:
 				_spawn_bullet(origin, _spread(dir, d["spread"]), d, false, true, sender)
 		_:
 			for i in int(d["pellets"]):
-				_spawn_bullet(origin, _spread(dir, d["spread"]), d, false, false, sender)
+				_spawn_bullet(origin, _spread(dir, d["spread"]), d, false, false, sender, (remotes[sender].name_text if remotes.has(sender) else "Enemy"))
 			_muzzle_flash(origin, Color(1, 0.5, 0.3))
 	var dist := origin.distance_to(player.global_position)
 	Audio.play_at(_fire_sound_name(w), origin, -2.0)
@@ -2104,7 +2181,7 @@ func _run_bot_ai(b: Fighter, delta: float) -> void:
 		var dir := _spread(ad.normalized(), float(prof["aimError"]))
 		b.model.recoil(0.8)
 		for i in int(wd["pellets"]):
-			_spawn_bullet(m, _spread(dir, float(wd["spread"]) * 0.6), wd, false, false)
+			_spawn_bullet(m, _spread(dir, float(wd["spread"]) * 0.6), wd, false, false, 0, b.name_text)
 		_muzzle_flash(m, Color(1, 0.5, 0.3))
 		if b.model.has_method("fire_pose"): b.model.fire_pose()
 		Audio.play_at(_fire_sound_name(b.current_weapon), m, -2.0)
@@ -2231,6 +2308,231 @@ class _Reticle:
 		draw_arc(c, size.length() * 0.9, 0, TAU, 64, Color(0, 0, 0, 0.35), size.length() * 0.9, false)
 
 ## Sniper scope: black outside a circle, glass tint, crosshair with mil-dots, range marks.
+## Hit feedback for the local player's shots: crosshair marker, tick, floating damage number.
+func _hit_feedback(pos: Vector3, dmg: float, head: bool, killed: bool) -> void:
+	if crosshair:
+		crosshair.hit(head or killed)
+	Audio.play("hitmarker", -5.0 if not head else -2.0, 1.55 if head else 1.25)
+	_dmg_number(pos + Vector3(0, 0.25, 0), dmg, head)
+
+## FF-style floating "-23" (red + bigger for headshots).
+func _dmg_number(pos: Vector3, dmg: float, head: bool) -> void:
+	var l := Label3D.new()
+	l.text = "-%d" % int(round(dmg))
+	l.font_size = 88 if head else 64
+	l.pixel_size = 0.005
+	l.outline_size = 12
+	l.modulate = Color(1.0, 0.25, 0.2) if head else Color(1.0, 0.92, 0.55)
+	l.outline_modulate = Color(0, 0, 0, 0.9)
+	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	l.no_depth_test = true
+	l.position = pos + Vector3(randf_range(-0.15, 0.15), 0, randf_range(-0.15, 0.15))
+	add_child(l)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(l, "position:y", l.position.y + 0.9, 0.8).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(l, "modulate:a", 0.0, 0.8).set_delay(0.25)
+	tw.chain().tween_callback(l.queue_free)
+
+## A kill by the local player: feed entry + streak / multi-kill announcer.
+func _register_kill(victim: String, wname: String, head: bool) -> void:
+	_kill_feed("You", victim, wname, head)
+	_streak += 1
+	var now := Time.get_ticks_msec() / 1000.0
+	_multi = _multi + 1 if now - _multi_t < 3.5 else 1
+	_multi_t = now
+	if head:
+		_announce("HEADSHOT", Color(1.0, 0.3, 0.2))
+	if _multi == 2:
+		_announce("DOUBLE KILL", Color(1.0, 0.75, 0.2))
+	elif _multi == 3:
+		_announce("TRIPLE KILL", Color(1.0, 0.55, 0.15))
+	elif _multi >= 4:
+		_announce("RAMPAGE", Color(1.0, 0.35, 0.1))
+	elif _streak == 5:
+		_announce("KILLING SPREE", Color(1.0, 0.8, 0.3))
+	elif _streak == 10:
+		_announce("UNSTOPPABLE", Color(1.0, 0.5, 0.2))
+
+func _kill_feed(killer: String, victim: String, wname: String, head: bool) -> void:
+	if killfeed:
+		killfeed.add(killer, victim, wname, head)
+
+## Centre-top banner ("HEADSHOT", "DOUBLE KILL" …) with a punch-in + fade.
+func _announce(text: String, col: Color) -> void:
+	if not announce_label:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	announce_label.text = text
+	announce_label.add_theme_color_override("font_color", col)
+	announce_label.reset_size()
+	announce_label.position = Vector2(vp.x * 0.5 - announce_label.size.x * 0.5, vp.y * 0.24)
+	announce_label.pivot_offset = announce_label.size * 0.5
+	announce_label.scale = Vector2(1.6, 1.6)
+	announce_label.modulate.a = 1.0
+	Audio.play("hitmarker", 2.0, 0.55)
+	var tw := create_tween()
+	tw.tween_property(announce_label, "scale", Vector2(1.0, 1.0), 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(1.1)
+	tw.tween_property(announce_label, "modulate:a", 0.0, 0.35)
+
+## Top-right kill feed: "You ▶ Bravo15 [AK-47]"; entries fade after a few seconds.
+class _KillFeed:
+	extends Control
+	var _box: VBoxContainer
+	func _ready() -> void:
+		_box = VBoxContainer.new()
+		_box.alignment = BoxContainer.ALIGNMENT_BEGIN
+		_box.add_theme_constant_override("separation", 2)
+		add_child(_box)
+		_layout()
+		get_viewport().size_changed.connect(_layout)
+	func _layout() -> void:
+		var vp := get_viewport().get_visible_rect().size
+		_box.position = Vector2(vp.x - 320, 62 + 150)   # right column, just under the minimap
+		_box.size = Vector2(300, 0)
+	func add(killer: String, victim: String, wname: String, head: bool) -> void:
+		var l := Label.new()
+		l.text = "%s  ▶  %s   [%s]%s" % [killer, victim, wname if wname != "" else "?", "  ☠" if head else ""]
+		l.add_theme_font_size_override("font_size", 14)
+		l.add_theme_color_override("font_color", Color(1.0, 0.35, 0.3) if killer == "You" and false else (Color(1, 0.9, 0.6) if killer == "You" else Color(1, 0.6, 0.55)))
+		l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+		l.add_theme_constant_override("outline_size", 5)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_box.add_child(l)
+		while _box.get_child_count() > 5:
+			_box.get_child(0).queue_free()
+			_box.remove_child(_box.get_child(0))
+		var tw := l.create_tween()
+		tw.tween_interval(4.5)
+		tw.tween_property(l, "modulate:a", 0.0, 0.6)
+		tw.tween_callback(l.queue_free)
+
+## Red arcs at the screen edge pointing toward whoever just hurt you.
+class _DmgIndicator:
+	extends Control
+	var game
+	var _arcs: Array = []      # [angle_rad, t]
+	func add(world_dir: Vector3) -> void:
+		var fwd: Vector3 = game._cam_dir()
+		var rgt: Vector3 = game._cam_right()
+		var d := Vector3(world_dir.x, 0.0, world_dir.z).normalized()
+		var ang := atan2(d.dot(rgt), d.dot(fwd))    # 0 = ahead, +right
+		_arcs.append([ang, 1.0])
+		queue_redraw()
+	func _process(delta: float) -> void:
+		if _arcs.is_empty():
+			return
+		for a in _arcs:
+			a[1] -= delta * 1.1
+		_arcs = _arcs.filter(func(a): return a[1] > 0.0)
+		queue_redraw()
+	func _draw() -> void:
+		var ctr := size * 0.5
+		var r := minf(size.x, size.y) * 0.21
+		for a in _arcs:
+			var k: float = clampf(a[1], 0.0, 1.0)
+			var mid: float = a[0] - PI * 0.5          # screen: up = ahead
+			draw_arc(ctr, r, mid - 0.45, mid + 0.45, 24, Color(1.0, 0.15, 0.1, 0.85 * k), 9.0, true)
+			draw_arc(ctr, r + 7.0, mid - 0.3, mid + 0.3, 16, Color(1.0, 0.4, 0.3, 0.45 * k), 4.0, true)
+
+## Radar minimap: camera-up, enemies red, pickups yellow, range ring.
+class _Minimap:
+	extends Control
+	var game
+	const RANGE := 42.0
+	const R := 66.0
+	func _ready() -> void:
+		_layout()
+		get_viewport().size_changed.connect(_layout)
+	func _layout() -> void:
+		var vp := get_viewport().get_visible_rect().size
+		size = Vector2(R * 2 + 12, R * 2 + 12)
+		position = Vector2(vp.x - size.x - 18, 62)
+	func _process(_d: float) -> void:
+		queue_redraw()
+	func _to_map(world: Vector3) -> Vector2:
+		var rel: Vector3 = world - game.player.global_position
+		var fwd: Vector3 = game._cam_dir(); fwd.y = 0; fwd = fwd.normalized()
+		var rgt: Vector3 = game._cam_right()
+		var p := Vector2(rel.dot(rgt), -rel.dot(fwd)) * (R / RANGE)
+		if p.length() > R - 4.0:
+			p = p.normalized() * (R - 4.0)
+		return p
+	func _draw() -> void:
+		if game == null or game.player == null:
+			return
+		var c := size * 0.5
+		draw_circle(c, R + 3.0, Color(0, 0, 0, 0.45))
+		draw_circle(c, R, Color(0.08, 0.1, 0.12, 0.72))
+		draw_arc(c, R, 0, TAU, 48, Color(1, 1, 1, 0.35), 1.5, true)
+		draw_arc(c, R * 0.5, 0, TAU, 32, Color(1, 1, 1, 0.12), 1.0, true)
+		draw_line(c - Vector2(R, 0), c + Vector2(R, 0), Color(1, 1, 1, 0.08), 1.0)
+		draw_line(c - Vector2(0, R), c + Vector2(0, R), Color(1, 1, 1, 0.08), 1.0)
+		# view cone
+		draw_colored_polygon(PackedVector2Array([c, c + Vector2(-R * 0.55, -R), c + Vector2(R * 0.55, -R)]), Color(1, 1, 1, 0.06))
+		# pickups
+		for k in game.pickups:
+			var pk = game.pickups[k]
+			if is_instance_valid(pk) and not pk.taken:
+				draw_circle(c + _to_map(pk.global_position), 2.2, Color(1.0, 0.85, 0.3, 0.9))
+		# enemies
+		for b in game.bots:
+			if is_instance_valid(b) and not b.dead:
+				var mp := c + _to_map(b.global_position)
+				draw_circle(mp, 4.5, Color(0, 0, 0, 0.6))
+				draw_circle(mp, 3.4, Color(1.0, 0.22, 0.18))
+		for id in game.remotes:
+			var r = game.remotes[id]
+			if is_instance_valid(r) and not r.dead:
+				var mp := c + _to_map(r.global_position)
+				draw_circle(mp, 4.5, Color(0, 0, 0, 0.6))
+				draw_circle(mp, 3.4, Color(1.0, 0.45, 0.2))
+		# player arrow (always up)
+		draw_colored_polygon(PackedVector2Array([c + Vector2(0, -7), c + Vector2(-5, 5), c + Vector2(5, 5)]), Color(1, 1, 1, 0.98))
+		# north tick
+		var fwd: Vector3 = game._cam_dir(); fwd.y = 0; fwd = fwd.normalized()
+		var rgt: Vector3 = game._cam_right()
+		var n := Vector2(Vector3.FORWARD.dot(rgt), -Vector3.FORWARD.dot(fwd)).normalized() * (R - 9.0)
+		draw_string(ThemeDB.fallback_font, c + n + Vector2(-4, 5), "N", HORIZONTAL_ALIGNMENT_CENTER, -1, 12, Color(1, 1, 1, 0.8))
+
+## PUBG-style heading strip at the top centre.
+class _Compass:
+	extends Control
+	var game
+	func _ready() -> void:
+		_layout()
+		get_viewport().size_changed.connect(_layout)
+	func _layout() -> void:
+		var vp := get_viewport().get_visible_rect().size
+		size = Vector2(260, 22)
+		position = Vector2(vp.x * 0.5 - 130, 100)
+	func _process(_d: float) -> void:
+		queue_redraw()
+	func _draw() -> void:
+		if game == null:
+			return
+		var w := size.x
+		draw_rect(Rect2(0, 0, w, size.y), Color(0, 0, 0, 0.35))
+		# heading in degrees (0 = north = -Z)
+		var fwd: Vector3 = game._cam_dir(); fwd.y = 0; fwd = fwd.normalized()
+		var heading := rad_to_deg(atan2(fwd.x, -fwd.z))
+		var px_per_deg := w / 120.0
+		var labels := {0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW"}
+		for deg in range(-180, 541, 15):
+			var d := float(deg) - heading
+			if d < -60.0 or d > 60.0:
+				continue
+			var x := w * 0.5 + d * px_per_deg
+			var key := int(posmod(deg, 360))
+			if labels.has(key):
+				draw_string(ThemeDB.fallback_font, Vector2(x - 8, 16), labels[key], HORIZONTAL_ALIGNMENT_CENTER, 16, 12, Color(1, 1, 1, 0.9))
+			else:
+				draw_line(Vector2(x, 14), Vector2(x, 20), Color(1, 1, 1, 0.5), 1.0)
+		draw_colored_polygon(PackedVector2Array([Vector2(w * 0.5, 1), Vector2(w * 0.5 - 5, -6), Vector2(w * 0.5 + 5, -6)]), Color(1, 0.8, 0.3))
+		draw_string(ThemeDB.fallback_font, Vector2(w * 0.5 - 14, size.y + 12), "%d°" % int(posmod(int(heading), 360)), HORIZONTAL_ALIGNMENT_CENTER, 28, 11, Color(1, 1, 1, 0.75))
+
 class _ScopeOverlay:
 	extends Control
 	func _draw() -> void:

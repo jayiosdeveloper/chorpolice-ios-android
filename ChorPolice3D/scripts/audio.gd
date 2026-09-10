@@ -4,7 +4,7 @@ extends Node
 
 const NAMES := ["rifle", "uzi", "shotgun", "sniper", "hit", "explosion", "pickup",
 	"capture", "win", "flame", "rocket", "nade_throw", "jet", "music_menu", "music_battle",
-	"reload", "step", "click", "swap", "ak47", "mp5", "magnum"]
+	"reload", "step", "click", "swap", "ak47", "mp5", "magnum", "hitmarker"]
 
 var sound_on := true
 var music_on := true

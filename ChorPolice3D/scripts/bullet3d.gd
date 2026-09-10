@@ -11,6 +11,8 @@ var life := 1.5
 var from_player := true
 var owner_id := 0
 var is_flame := false
+var wname := ""                      # weapon display name (kill feed)
+var shooter := ""                    # who fired (kill feed)
 var _mi: MeshInstance3D
 var _age := 0.0
 
