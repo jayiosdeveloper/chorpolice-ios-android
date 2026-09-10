@@ -969,7 +969,7 @@ func _fire() -> void:
 				_spawn_bullet(muzzle, _spread(dir, d["spread"] * spread_k), d, true, false, local_id)
 			_muzzle_flash(muzzle, Color(1, 0.9, 0.4))
 	_play_fire_sound()
-	shake((1.5 if current_weapon != Weapons.SNIPER else 3.0) * lerpf(1.0, 0.5, ads_t))
+	shake((0.5 if current_weapon != Weapons.SNIPER else 1.1) * lerpf(1.0, 0.5, ads_t))   # subtle; the view kick is recoil_off
 	# recoil kick (view climbs + slight random horizontal) + crosshair bloom, per weapon
 	var rf: float = 2.3 if current_weapon in [Weapons.SHOTGUN, Weapons.SNIPER, Weapons.MAGNUM, Weapons.ROCKET] else 1.0
 	var ads_k := lerpf(1.0, 0.45, ads_t)
@@ -1072,7 +1072,6 @@ func bullet_hit(b: Bullet3D, hit: Dictionary) -> void:
 					spawn_spark(pos)
 				_hit_feedback(pos, dmg, head, died)
 				if died:
-					shake(4.0)
 					_register_kill(f.name_text, b.wname, head)
 		elif f == player:
 			damage_local_player(dmg, b.owner_id, pos, -b.vel.normalized(), b.shooter, b.wname)
@@ -1278,7 +1277,8 @@ func _spawn_explosion(pos: Vector3) -> void:
 	# felt: shake by distance + positional boom
 	if player:
 		var d := player.global_position.distance_to(pos)
-		shake(10.0 * clampf(1.0 - d / 30.0, 0.0, 1.0))
+		if d < 11.0:
+			shake(6.0 * clampf(1.0 - d / 11.0, 0.0, 1.0))
 	Audio.play_at("explosion", pos, 4.0, 1.0, 120.0)
 
 ## Generic one-shot sprite particle burst (billboard quads), additive or alpha.
@@ -1445,9 +1445,6 @@ func spawn_impact(pos: Vector3, normal: Vector3, col: Object) -> void:
 			_fx_debris(p, 7, Color(0.5, 0.48, 0.45), 0.025, 2.5, 6.0, 0.6)
 			_burst(p, 5, 0.18, 5.0, Color(1, 0.75, 0.35), 0.35)
 			spawn_bullet_hole(pos, normal)
-
-	_burst(pos + Vector3(0, 0.3, 0), 18, 1.1, 3.0, Color(0.35, 0.35, 0.35), 2.4)
-	shake(9.0)
 	Audio.play("explosion")
 
 func _burst(pos: Vector3, count: int, life: float, speed: float, col: Color, psize: float) -> CPUParticles3D:
@@ -1492,7 +1489,7 @@ func explode(pos: Vector3, radius: float, dmg: float, owner_id := 0) -> void:
 				_kill_feed("Enemy", "You", "GRENADE", false)
 				_streak = 0
 			hit_vignette.color.a = 0.45
-			shake(12.0 if died else 7.0)
+			shake(5.0 if died else 3.5)
 			if is_mp:
 				Net.send({"t": "hit", "x": player.global_position.x, "y": player.global_position.y, "z": player.global_position.z,
 					"hp": player.health, "dead": died, "by": owner_id}, true)
@@ -1523,7 +1520,13 @@ func damage_local_player(dmg: float, killer_id: int, _pos: Vector3, from_dir := 
 		_streak = 0
 	hit_vignette.color.a = minf(0.5, hit_vignette.color.a + 0.25)
 	Audio.play("hit")
-	shake(6.0 if died else 2.5)
+	# FF/PUBG style: being shot does NOT shake the world — the red arc + vignette say where
+	# it came from; only a tiny deterministic aim punch (flinch) nudges the view
+	if not died:
+		recoil_off.y += 0.0025
+		recoil_off.x += (0.0018 if from_dir.dot(_cam_right()) > 0.0 else -0.0018)
+	else:
+		shake(3.0)
 	if is_mp:
 		Net.send({"t": "hit", "x": player.global_position.x, "y": player.global_position.y, "z": player.global_position.z,
 			"hp": player.health, "dead": died, "by": killer_id}, true)
@@ -1598,7 +1601,7 @@ func shake(mag: float) -> void:
 func _on_player_died() -> void:
 	_set_ads(false)
 	_drop_flag_on_death()
-	shake(8.0)
+	shake(3.0)
 	get_tree().create_timer(1.8).timeout.connect(_do_player_respawn)
 
 func _do_player_respawn() -> void:
@@ -1755,11 +1758,14 @@ func _remote_hit(sender: int, msg: Dictionary) -> void:
 		r.health = float(msg["hp"])
 		r._update_hp()
 		r._flash()
-		if bool(msg["dead"]):
-			_spawn_explosion(r.global_position + Vector3(0, 0.9, 0))
+		if bool(msg["dead"]) and not r.dead:
+			r.dead = true
+			r._set_body_visible(false)                # falls + leaves a corpse (no explosion)
 	if bool(msg["dead"]) and int(msg.get("by", 0)) == local_id:
 		kills += 1
-		shake(6.0)
+		Audio.play("hit", -3.0, 0.8)
+		var vn: String = remotes[sender].name_text if remotes.has(sender) else "Enemy"
+		_register_kill(vn, String(Weapons.data(current_weapon)["name"]), false)
 
 func _reconcile_remotes() -> void:
 	for id in remotes.keys():
@@ -1952,7 +1958,7 @@ func _update_ctf() -> void:
 			my_carrying = -1
 			my_captures += 1
 			Audio.play("capture")
-			shake(7.0)
+			shake(2.0)
 
 func _apply_flag_event(by: int, msg: Dictionary) -> void:
 	if flag_status.is_empty():
@@ -2078,7 +2084,6 @@ func _spawn_bot() -> void:
 
 func _on_bot_died(b: Fighter) -> void:
 	kills += 1
-	shake(2.5)
 	Audio.play("hit", -3.0, 0.8)                      # kill confirm
 	bots.erase(b)
 	b._set_body_visible(false)                        # death fall, then a corpse is left behind
