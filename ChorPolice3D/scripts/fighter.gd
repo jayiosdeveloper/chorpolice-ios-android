@@ -550,6 +550,10 @@ func _process(_delta: float) -> void:
 		_ping_t = maxf(0.0, _ping_t - _delta)
 		want = 1.0 if _ping_t > 0.0 else 0.0
 	_plate_a = lerpf(_plate_a, want, 1.0 - exp(-_delta * 12.0))
+	var fk := clampf(cam.fov / 72.0, 0.16, 1.0)
+	_ring.scale = Vector3(fk, fk, fk)
+	_pct.scale = Vector3(fk, fk, fk)
+	name_label.scale = Vector3(fk, fk, fk)
 	a *= _plate_a
 	overlay.visible = _plate_a > 0.02
 	name_label.modulate.a = a

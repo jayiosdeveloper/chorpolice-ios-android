@@ -66,8 +66,6 @@ var cam_roll := 0.0                  # brief view tilt away from a hit
 var lean := 0.0                      # -1 left / 0 / 1 right (peek around cover)
 var lean_t := 0.0
 var lean_ids := {}                   # touch index -> -1 / 1
-var lean_l_button: Control
-var lean_r_button: Control
 var lowhp_rect: ColorRect
 var medkits := 1                     # FF / PUBG: heal takes time, from inventory
 var healing_t := -1.0                # >= 0 while a medkit is being used
@@ -164,6 +162,7 @@ var scope_button: Control
 var reticle: Control
 const RECOIL_RECOVER := 9.0
 var scope_overlay: Control
+var scope_glass: ColorRect            # screen shader: blurred dark periphery + bezel + lens
 var ads := false
 var ads_t := 0.0
 var next_button: Button
@@ -352,17 +351,26 @@ func _update_camera(delta: float, snap := false) -> void:
 	var pivot := player.global_position + Vector3(0, lerpf(CAM_UP, 1.5, ads_t), 0)
 	var dir := _cam_dir()
 	var rgt := _cam_right()
+	var scoped := scope_overlay != null and scope_overlay.visible
 	var want := pivot - dir * lerpf(CAM_DIST, 1.45, ads_t) + rgt * (lerpf(CAM_SIDE, 0.5, ads_t) + lean_t * 0.55) + Vector3(0, lerpf(0.35, 0.12, ads_t), 0)
+	if scoped:
+		# sniper scope = through the glass (PUBG / FF): camera at the eye, own body hidden
+		want = player.eye_position() + dir * 0.25 + rgt * lean_t * 0.4
+		pivot = want
+	if player.model:
+		player.model.visible = not scoped and not (player.dead and not player.model.visible)
+	if crosshair:
+		crosshair.visible = not scoped
 	# keep the camera out of walls
 	var q := PhysicsRayQueryParameters3D.create(pivot, want, 1)
-	var hit := get_world_3d().direct_space_state.intersect_ray(q)
+	var hit := {} if scoped else get_world_3d().direct_space_state.intersect_ray(q)
 	if hit:
 		want = hit["position"] + hit["normal"] * 0.45 + (pivot - hit["position"]).normalized() * 0.3
 	if snap:
 		cam.global_position = want
 	else:
 		cam.global_position = cam.global_position.lerp(want, 1.0 - exp(-delta * 16.0))
-	var look := pivot + rgt * (lerpf(CAM_SIDE, 0.5, ads_t) + lean_t * 0.55) + dir * 10.0
+	var look := (pivot + dir * 10.0) if scoped else (pivot + rgt * (lerpf(CAM_SIDE, 0.5, ads_t) + lean_t * 0.55) + dir * 10.0)
 	if ads_t > 0.01:
 		look += Vector3(sin(Time.get_ticks_msec() * 0.0013), cos(Time.get_ticks_msec() * 0.0009), 0) * 0.02 * ads_t
 	if shake_mag > 0.05:
@@ -502,10 +510,6 @@ func _build_hud() -> void:
 	scope_button = HudKit.make("scope", hs * Settings.hud_size_of("scope")); hud.add_child(scope_button)
 	med_button = HudKit.make("med", hs * Settings.hud_size_of("med")); hud.add_child(med_button)
 	skill_button = HudKit.make("skill", hs * Settings.hud_size_of("skill")); hud.add_child(skill_button)
-	lean_l_button = _LeanBtn.new(); lean_l_button.dir = -1; hud.add_child(lean_l_button)
-	lean_r_button = _LeanBtn.new(); lean_r_button.dir = 1; hud.add_child(lean_r_button)
-	lean_l_button.anchor_to(scope_button, -1)
-	lean_r_button.anchor_to(scope_button, 1)
 	reticle = _Reticle.new()
 	reticle.set_anchors_preset(Control.PRESET_FULL_RECT)
 	reticle.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -516,6 +520,17 @@ func _build_hud() -> void:
 	scope_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	scope_overlay.visible = false
 	hud.add_child(scope_overlay)
+	scope_glass = ColorRect.new()
+	scope_glass.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scope_glass.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var _sg := ShaderMaterial.new()
+	_sg.shader = load("res://assets/real/fx/scope.gdshader")
+	scope_glass.material = _sg
+	scope_glass.visible = false
+	hud.add_child(scope_glass)
+	if lowhp_rect:
+		hud.move_child(scope_glass, lowhp_rect.get_index() + 1)     # over the 3D view
+		hud.move_child(scope_overlay, lowhp_rect.get_index() + 2)   # reticle on top of the glass, under buttons
 	for pair in [[nade_button, "nade"], [jump_button, "jump"], [fire_button, "fire"], [fire_button_l, "fire_l"], [reload_button, "reload"], [scope_button, "scope"], [med_button, "med"], [skill_button, "skill"]]:
 		HudKit.place(pair[0], Settings.hud_center(pair[1], vp))
 
@@ -801,9 +816,6 @@ func _physics_process(delta: float) -> void:
 	cam_roll = lerpf(cam_roll, 0.0, 1.0 - exp(-delta * 7.0))
 	# lean: smooth toward the held direction, tilt the spine and shift the camera
 	lean_t = lerpf(lean_t, lean, 1.0 - exp(-delta * 10.0))
-	if lean_l_button and scope_button:
-		lean_l_button.anchor_to(scope_button, -1)
-		lean_r_button.anchor_to(scope_button, 1)
 	# medkit use (FF / PUBG: takes time, slows you, cancelled by damage)
 	if healing_t >= 0.0 and not player.dead:
 		healing_t += delta
@@ -948,6 +960,11 @@ func _physics_process(delta: float) -> void:
 	var scoped := ads_t > 0.5 and not player.dead
 	reticle.visible = scoped and current_weapon != Weapons.SNIPER
 	scope_overlay.visible = scoped and current_weapon == Weapons.SNIPER
+	if scope_glass:
+		scope_glass.visible = scope_overlay.visible
+		if scope_glass.visible:
+			var vps := get_viewport().get_visible_rect().size
+			(scope_glass.material as ShaderMaterial).set_shader_parameter("aspect", vps.x / maxf(vps.y, 1.0))
 	crosshair.visible = not scoped
 
 	# facing: aiming/firing -> face the camera (shooter stance); else face the movement
@@ -2408,12 +2425,6 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		using_touch = true
 		if event.pressed:
-			if lean_l_button and _btn_rect(lean_l_button, 8.0).has_point(event.position):
-				lean_ids[event.index] = -1.0; lean = -1.0
-				return
-			if lean_r_button and _btn_rect(lean_r_button, 8.0).has_point(event.position):
-				lean_ids[event.index] = 1.0; lean = 1.0
-				return
 			if _btn_rect(nade_button, 14.0).has_point(event.position):
 				nade_id = event.index
 				nade_aim = Vector2.ZERO
@@ -2546,6 +2557,9 @@ func _dmg_number(pos: Vector3, dmg: float, head: bool) -> void:
 	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	l.no_depth_test = true
 	l.position = pos + Vector3(randf_range(-0.15, 0.15), 0, randf_range(-0.15, 0.15))
+	if cam:
+		var fk := clampf(cam.fov / 72.0, 0.16, 1.0)
+		l.scale = Vector3(fk, fk, fk)
 	add_child(l)
 	var tw := create_tween()
 	tw.set_parallel(true)
@@ -2966,10 +2980,8 @@ class _ScopeOverlay:
 	func _draw() -> void:
 		var c := size / 2.0
 		var R := minf(size.x, size.y) * 0.46
-		draw_arc(c, R + 2000.0, 0, TAU, 96, Color(0.01, 0.01, 0.02), 4000.0, false)
-		draw_arc(c, R, 0, TAU, 96, Color(0.2, 0.55, 0.9, 0.08), R * 0.25, false)
-		draw_arc(c, R, 0, TAU, 128, Color(0.05, 0.05, 0.06), 10.0, true)
-		draw_arc(c, R - 8, 0, TAU, 128, Color(0.35, 0.8, 1.0, 0.35), 2.0, true)
+		draw_arc(c, R, 0, TAU, 128, Color(0.02, 0.02, 0.03, 0.9), 3.0, true)
+		draw_arc(c, R - 5, 0, TAU, 128, Color(0.35, 0.8, 1.0, 0.22), 1.5, true)
 		var line := Color(0.05, 0.05, 0.05, 0.95)
 		draw_line(c + Vector2(-R, 0), c + Vector2(R, 0), line, 2.0)
 		draw_line(c + Vector2(0, -R), c + Vector2(0, R), line, 2.0)

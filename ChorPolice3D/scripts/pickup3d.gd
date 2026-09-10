@@ -187,6 +187,15 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_t += delta
 	_root.rotation.y += delta * 1.4
+	var cam := get_viewport().get_camera_3d()
+	if cam:
+		var k := clampf(cam.fov / 72.0, 0.16, 1.0)   # keep world-space text the same screen size when scoped
+		for c in get_children():
+			if c is Label3D:
+				(c as Label3D).scale = Vector3(k, k, k)
+		for c in _root.get_children():
+			if c is Label3D:
+				(c as Label3D).scale = Vector3(k, k, k)
 	_root.position.y = _base_y + sin(_t * 2.2) * 0.12
 	if _ring:
 		var k := 1.0 + 0.07 * sin(_t * 3.0)
