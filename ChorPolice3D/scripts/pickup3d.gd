@@ -41,6 +41,14 @@ func _ready() -> void:
 			col = Color(0.36, 0.5, 0.28)
 			label = "GRENADES"
 			model_path = "res://assets/real/models/ammo_box/ammo_box_1k.gltf"
+		"boost":
+			col = Color(1.0, 0.6, 0.15)
+			label = "ENERGY"
+			model_path = ""
+		"airdrop":
+			col = Color(1.0, 0.3, 0.2)
+			label = "AIRDROP"
+			model_path = "res://assets/real/models/old_military_crate/old_military_crate_1k.gltf"
 		"attach":
 			col = Color(0.4, 0.85, 1.0)
 			label = {"supp": "SUPPRESSOR", "comp": "COMPENSATOR", "scope": "RED DOT"}.get(attach_type, "ATTACHMENT")
@@ -60,6 +68,24 @@ func _ready() -> void:
 			inst.scale = Vector3(s, s, s)
 			inst.position = -ab.position * s      # sit centred on the disc
 		placed = true
+	if kind == "boost":                             # energy can + ring
+		var mi2 := MeshInstance3D.new()
+		var mm := StandardMaterial3D.new()
+		var cy := CylinderMesh.new(); cy.top_radius = 0.09; cy.bottom_radius = 0.09; cy.height = 0.3; cy.radial_segments = 14
+		mm.albedo_color = Color(1.0, 0.55, 0.12); mm.metallic = 0.6; mm.roughness = 0.35
+		mm.emission_enabled = true; mm.emission = Color(1.0, 0.5, 0.1); mm.emission_energy_multiplier = 0.4
+		cy.material = mm; mi2.mesh = cy
+		mi2.rotation.z = 0.3
+		_root.add_child(mi2)
+		_base_y = 0.6
+		placed = true
+		var ring2 := MeshInstance3D.new()
+		var tm2 := TorusMesh.new(); tm2.inner_radius = 0.34; tm2.outer_radius = 0.44
+		var rm2 := StandardMaterial3D.new()
+		rm2.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED; rm2.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA; rm2.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		rm2.albedo_color = Color(col.r, col.g, col.b, 0.9); rm2.emission_enabled = true; rm2.emission = col; rm2.emission_energy_multiplier = 2.5
+		tm2.material = rm2; ring2.mesh = tm2; ring2.position = Vector3(0, 0.03, 0); ring2.scale = Vector3(1, 0.22, 1)
+		add_child(ring2); _ring = ring2
 	if kind == "attach":                            # small floating attachment part + ring
 		var pivot := Node3D.new()
 		pivot.rotation.z = 0.35
@@ -150,7 +176,7 @@ func _ready() -> void:
 
 	var light := OmniLight3D.new()
 	light.light_color = col
-	light.light_energy = 0.8 if (kind == "health" or kind == "nades") else 1.6
+	light.light_energy = 0.8 if (kind == "health" or kind == "nades") else (3.0 if kind == "airdrop" else 1.6)
 	light.omni_range = 2.5 if (kind == "health" or kind == "nades") else 3.2
 	light.shadow_enabled = false
 	light.position = Vector3(0, 0.6, 0)

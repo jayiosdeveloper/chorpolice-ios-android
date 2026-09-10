@@ -5,8 +5,8 @@
 class_name HudKit
 extends RefCounted
 
-const KINDS := ["fire", "fire_l", "jump", "reload", "nade", "scope"]
-const NAMES := {"fire": "FIRE", "fire_l": "FIRE (left)", "jump": "JUMP", "reload": "RELOAD", "nade": "GRENADE", "scope": "SCOPE"}
+const KINDS := ["fire", "fire_l", "jump", "reload", "nade", "scope", "med", "skill"]
+const NAMES := {"fire": "FIRE", "fire_l": "FIRE (left)", "jump": "JUMP", "reload": "RELOAD", "nade": "GRENADE", "scope": "SCOPE", "med": "MEDKIT", "skill": "SKILL"}
 
 static func make(kind: String, scl := 1.0) -> Control:
 	var c: Control
@@ -16,6 +16,8 @@ static func make(kind: String, scl := 1.0) -> Control:
 		"jump": c = _jump()
 		"reload": c = _reload()
 		"scope": c = _scope()
+		"med": c = _glyph_btn("✚", "MED", Color(0.35, 0.95, 0.5), 30)
+		"skill": c = _glyph_btn("★", "SKILL", Color(1.0, 0.8, 0.3), 34)
 		_: c = _nade()
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	c.scale = Vector2(scl, scl)
@@ -87,6 +89,45 @@ static func _jump() -> Control:
 	jl.position = Vector2(30, 66)
 	jl.modulate = Color(1, 1, 1, 0.7)
 	c.add_child(jl)
+	return c
+
+## Round button with a big glyph + caption (MED / GLOO / SKILL). A "count"/"cd" Label child
+## named Count is updated by the game (item count or cooldown seconds).
+static func _glyph_btn(glyph: String, caption: String, col: Color, r: float) -> Control:
+	var c := Control.new()
+	c.size = Vector2(r * 2.0, r * 2.0)
+	var ctr := Vector2(r, r)
+	var rim := Shapes.circ(r - 2.0, Color(1, 1, 1, 0.4)); rim.position = ctr; c.add_child(rim)
+	var disc := Shapes.circ(r - 4.0, Color(col.r * 0.25, col.g * 0.25, col.b * 0.25, 0.55)); disc.position = ctr; c.add_child(disc)
+	var g := Label.new()
+	g.text = glyph
+	g.add_theme_font_size_override("font_size", int(r * 0.9))
+	g.add_theme_color_override("font_color", col)
+	g.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.7))
+	g.add_theme_constant_override("outline_size", 4)
+	g.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	g.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	g.size = Vector2(r * 2.0, r * 2.0)
+	g.position = Vector2(0, -r * 0.18)
+	c.add_child(g)
+	var l := Label.new()
+	l.text = caption
+	l.add_theme_font_size_override("font_size", 10)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.size = Vector2(r * 2.0, 14)
+	l.position = Vector2(0, r * 2.0 - 20)
+	l.modulate = Color(1, 1, 1, 0.75)
+	c.add_child(l)
+	var n := Label.new()
+	n.name = "Count"
+	n.text = ""
+	n.add_theme_font_size_override("font_size", 13)
+	n.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	n.add_theme_constant_override("outline_size", 4)
+	n.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	n.size = Vector2(28, 18)
+	n.position = Vector2(r * 2.0 - 26, -2)
+	c.add_child(n)
 	return c
 
 static func _reload() -> Control:

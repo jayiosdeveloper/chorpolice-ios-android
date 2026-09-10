@@ -34,6 +34,7 @@ const BOT_PROFILES := [
 	 "chaseBias": 0.95, "standoff": 6.0, "dodgeProb": 0.75, "lead": 1.0, "maxAlive": 5},
 ]
 const PICKUP_PATTERN := [
+	{"kind": "boost"},
 	{"kind": "attach", "a": "supp"}, {"kind": "attach", "a": "comp"}, {"kind": "attach", "a": "scope"},
 	{"kind": "health"}, {"kind": "weapon", "w": 2}, {"kind": "weapon", "w": 1},
 	{"kind": "weapon", "w": 3}, {"kind": "nades"}, {"kind": "weapon", "w": 6},
@@ -68,6 +69,24 @@ var lean_ids := {}                   # touch index -> -1 / 1
 var lean_l_button: Control
 var lean_r_button: Control
 var lowhp_rect: ColorRect
+var medkits := 1                     # FF / PUBG: heal takes time, from inventory
+var healing_t := -1.0                # >= 0 while a medkit is being used
+var heal_bar: ColorRect
+var boost_fill: ColorRect
+var vitals: Control
+var med_button: Control
+var skill_button: Control
+var skill_cd := 0.0                  # seconds until the character skill is ready
+var skill_t := 0.0                   # seconds of active skill left
+var reveal_t := 0.0                  # Nova: enemies shown on the minimap regardless of range
+var airdrop_timer := 45.0
+var airdrops: Array = []             # landed / falling airdrop nodes (minimap markers)
+const MEDKIT_TIME := 3.0
+const SKILLS := {
+	"bravo": {"name": "ADRENALINE", "cd": 40.0, "dur": 8.0, "desc": "+25% speed, +15% fire rate"},
+	"striker": {"name": "DROP THE BEAT", "cd": 45.0, "dur": 10.0, "desc": "heal 5 HP/s, +10% speed"},
+	"nova": {"name": "EAGLE EYE", "cd": 45.0, "dur": 8.0, "desc": "enemies revealed, +30% headshot"},
+}
 var lowhp_amt := 0.0
 var attachments := {}                # weapon id -> {"supp": true, ...}
 # Per-weapon recoil: shot-by-shot kick pattern (x = horizontal, y = vertical), kick size, recovery
@@ -383,15 +402,14 @@ func _build_hud() -> void:
 	lowhp_rect.visible = false
 	hud.add_child(lowhp_rect)
 
-	_hud_text("JET FUEL", Vector2(20, 16), 12, Color(1, 1, 1, 0.65))
-	fuel_fill = _bar(Vector2(20, 34), Color(0.96, 0.62, 0.10))
-	_hud_text("HEALTH", Vector2(20, 56), 12, Color(1, 1, 1, 0.65))
-	health_fill = _bar(Vector2(20, 74), Color(0.30, 0.85, 0.40))
-	weapon_label = _hud_text("", Vector2(20, 96), 15, Color(1, 1, 1, 0.92))
+	_build_vitals()
+	weapon_label = _hud_text("", Vector2(20, 96), 19, Color(1, 1, 1, 0.95))
+	weapon_label.add_theme_font_override("font", FONT_DISPLAY)
+	_layout_vitals()                                   # ammo sits right of the HP bar (bottom centre)
 	reload_bar = ColorRect.new()
 	reload_bar.color = Color(0.1, 0.1, 0.12, 0.7)
 	reload_bar.size = Vector2(150, 5)
-	reload_bar.position = Vector2(0, 30)
+	reload_bar.position = Vector2(0, 54)
 	reload_bar.visible = false
 	var _rbf := ColorRect.new()
 	_rbf.name = "fill"
@@ -407,8 +425,9 @@ func _build_hud() -> void:
 	kills_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
 	kills_label.add_theme_constant_override("outline_size", 7)
 	kills_label.anchor_left = 0.0; kills_label.anchor_right = 1.0
-	kills_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	kills_label.offset_top = 14
+	kills_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	kills_label.offset_right = -22
+	kills_label.offset_top = 212                        # under the minimap (PUBG puts kills there)
 	hud.add_child(kills_label)
 
 	timer_label = Label.new()
@@ -416,7 +435,7 @@ func _build_hud() -> void:
 	timer_label.add_theme_font_size_override("font_size", 26)
 	timer_label.anchor_left = 0.0; timer_label.anchor_right = 1.0
 	timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	timer_label.offset_top = 38
+	timer_label.offset_top = 12
 	hud.add_child(timer_label)
 
 	var name_label := Label.new()
@@ -425,7 +444,7 @@ func _build_hud() -> void:
 	name_label.modulate = Color(1, 1, 1, 0.55)
 	name_label.anchor_left = 0.0; name_label.anchor_right = 1.0
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_label.offset_top = 70
+	name_label.offset_top = 46
 	hud.add_child(name_label)
 
 	# dynamic crosshair (4 ticks + dot; spreads on fire, tightens back — shooting feedback)
@@ -481,6 +500,8 @@ func _build_hud() -> void:
 	fire_button_l = HudKit.make("fire_l", hs * Settings.hud_size_of("fire_l")); hud.add_child(fire_button_l)
 	reload_button = HudKit.make("reload", hs * Settings.hud_size_of("reload")); hud.add_child(reload_button)
 	scope_button = HudKit.make("scope", hs * Settings.hud_size_of("scope")); hud.add_child(scope_button)
+	med_button = HudKit.make("med", hs * Settings.hud_size_of("med")); hud.add_child(med_button)
+	skill_button = HudKit.make("skill", hs * Settings.hud_size_of("skill")); hud.add_child(skill_button)
 	lean_l_button = _LeanBtn.new(); lean_l_button.dir = -1; hud.add_child(lean_l_button)
 	lean_r_button = _LeanBtn.new(); lean_r_button.dir = 1; hud.add_child(lean_r_button)
 	lean_l_button.anchor_to(scope_button, -1)
@@ -495,7 +516,7 @@ func _build_hud() -> void:
 	scope_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	scope_overlay.visible = false
 	hud.add_child(scope_overlay)
-	for pair in [[nade_button, "nade"], [jump_button, "jump"], [fire_button, "fire"], [fire_button_l, "fire_l"], [reload_button, "reload"], [scope_button, "scope"]]:
+	for pair in [[nade_button, "nade"], [jump_button, "jump"], [fire_button, "fire"], [fire_button_l, "fire_l"], [reload_button, "reload"], [scope_button, "scope"], [med_button, "med"], [skill_button, "skill"]]:
 		HudKit.place(pair[0], Settings.hud_center(pair[1], vp))
 
 	# grenade trajectory markers (3D, hidden until dragging)
@@ -569,7 +590,7 @@ func _update_weapon_hud() -> void:
 	var d := Weapons.data(current_weapon)
 	var reserve_text := "∞" if (unlimited_ammo or ammo == -1) else str(ammo)
 	var nade_text := "∞" if unlimited_ammo else str(grenades)
-	weapon_label.text = "%s  %d / %s   •   NADES %s" % [d["name"], mag, reserve_text, nade_text]
+	weapon_label.text = "%s   %d / %s\nNADES  %s" % [d["name"], mag, reserve_text, nade_text]
 	if player and player.is_reloading():
 		weapon_label.text += "   RELOADING…"
 
@@ -735,7 +756,21 @@ func on_pickup(p: Pickup3D) -> void:
 	p.taken = true
 	match p.kind:
 		"health":
-			player.heal(40.0)
+			medkits = mini(medkits + 1, 5)          # goes to inventory: use it with MED (takes time)
+			_announce("MEDKIT +1", Color(0.4, 0.95, 0.5))
+		"boost":
+			player.boost = minf(player.boost + 60.0, 100.0)
+		"airdrop":
+			medkits = mini(medkits + 2, 5)
+			player.boost = 100.0
+			_equip(Weapons.SNIPER)
+			for a in ["supp", "comp", "scope"]:
+				if not attachments.has(current_weapon):
+					attachments[current_weapon] = {}
+				attachments[current_weapon][a] = true
+			_apply_attachments()
+			airdrops.erase(p)
+			_announce("AIRDROP LOOTED", Color(1.0, 0.55, 0.3))
 		"weapon":
 			_equip(p.weapon_type)
 			Audio.play("swap")
@@ -748,6 +783,9 @@ func on_pickup(p: Pickup3D) -> void:
 	var spot: int = p.spot
 	if is_mp:
 		Net.send({"t": "pickup", "spot": spot}, true)
+	if spot < 0:
+		p.queue_free()
+		return
 	pickups.erase(spot)
 	p.queue_free()
 	pickup_cycles[spot] = int(pickup_cycles.get(spot, 0)) + 1
@@ -766,6 +804,44 @@ func _physics_process(delta: float) -> void:
 	if lean_l_button and scope_button:
 		lean_l_button.anchor_to(scope_button, -1)
 		lean_r_button.anchor_to(scope_button, 1)
+	# medkit use (FF / PUBG: takes time, slows you, cancelled by damage)
+	if healing_t >= 0.0 and not player.dead:
+		healing_t += delta
+		if healing_t >= MEDKIT_TIME:
+			healing_t = -1.0
+			medkits = maxi(0, medkits - 1)
+			player.heal(75.0)
+			Audio.play("pickup", -2.0, 0.8)
+			_announce("+75 HP", Color(0.4, 0.95, 0.5))
+	# boost: slow regen + slight speed while it lasts
+	if player.boost > 0.0 and not player.dead:
+		player.boost = maxf(0.0, player.boost - delta * 1.6)
+		if player.health < player.max_health:
+			player.heal(delta * 1.2)
+	# character skill timers / effects
+	skill_cd = maxf(0.0, skill_cd - delta)
+	if skill_t > 0.0:
+		skill_t = maxf(0.0, skill_t - delta)
+		if Settings.char_id == "striker" and player.health < player.max_health:
+			player.heal(delta * 5.0)
+	reveal_t = maxf(0.0, reveal_t - delta)
+	# movement speed = healing x boost x skill
+	var sm := 1.0
+	if healing_t >= 0.0: sm *= 0.4
+	if player.boost > 0.0: sm *= 1.06
+	if skill_t > 0.0:
+		sm *= 1.25 if Settings.char_id == "bravo" else (1.1 if Settings.char_id == "striker" else 1.0)
+	player.speed_mult = sm
+	# enemy plates: show the one under the crosshair
+	var aimed := _assist_target(9.0, 60.0)
+	if aimed and aimed.has_method("overlay_ping"):
+		aimed.overlay_ping(0.3)
+	# airdrop event
+	if not match_over:
+		airdrop_timer -= delta
+		if airdrop_timer <= 0.0:
+			airdrop_timer = randf_range(95.0, 130.0)
+			_spawn_airdrop()
 	if player and player.model and player.model.has_method("set_lean"):
 		player.model.set_lean(lean_t)
 	# low-HP desaturation + heartbeat
@@ -902,11 +978,11 @@ func _physics_process(delta: float) -> void:
 		if rl:
 			var k := clampf((Time.get_ticks_msec() / 1000.0 - _reload_t0) / maxf(_reload_dur, 0.01), 0.0, 1.0)
 			reload_bar.get_node("fill").size.x = reload_bar.size.x * k
-	if want_fire:
+	if want_fire and healing_t < 0.0:
 		fire_cooldown -= delta
 		if fire_cooldown <= 0.0 and not player.dead and not match_over:
 			_fire()
-			fire_cooldown = Weapons.data(current_weapon)["interval"]
+			fire_cooldown = float(Weapons.data(current_weapon)["interval"]) * (0.85 if (skill_t > 0.0 and Settings.char_id == "bravo") else 1.0)
 	else:
 		fire_cooldown = 0.0
 
@@ -915,8 +991,19 @@ func _physics_process(delta: float) -> void:
 
 	_update_camera(delta)
 
-	fuel_fill.size.x = 170.0 * clampf(player.fuel / Fighter.MAX_FUEL, 0.0, 1.0)
-	health_fill.size.x = 170.0 * clampf(player.health / player.max_health, 0.0, 1.0)
+	fuel_fill.size.x = 300.0 * clampf(player.fuel / Fighter.MAX_FUEL, 0.0, 1.0)
+	health_fill.size.x = lerpf(health_fill.size.x, 300.0 * clampf(player.health / player.max_health, 0.0, 1.0), 1.0 - exp(-delta * 10.0))
+	var hf := clampf(player.health / player.max_health, 0.0, 1.0)
+	health_fill.color = Color(0.3, 0.9, 0.45) if hf > 0.5 else (Color(0.95, 0.78, 0.2) if hf > 0.25 else Color(0.95, 0.3, 0.25))
+	if vitals and vitals.has_node("HP"):
+		(vitals.get_node("HP") as Label).text = "%d" % int(round(player.health))
+	if boost_fill:
+		boost_fill.size.x = 300.0 * clampf(player.boost / 100.0, 0.0, 1.0)
+	if heal_bar:
+		heal_bar.visible = healing_t >= 0.0
+		if healing_t >= 0.0:
+			heal_bar.get_node("fill").size.x = 300.0 * clampf(healing_t / MEDKIT_TIME, 0.0, 1.0)
+	_update_action_buttons(delta)
 	hit_vignette.color.a = move_toward(hit_vignette.color.a, 0.0, delta * 1.2)
 	_update_score_hud()
 	if is_mp and not match_over:
@@ -1145,6 +1232,11 @@ func bullet_hit(b: Bullet3D, hit: Dictionary) -> void:
 		# head zone: the top ~30 cm of the body (2x damage, red numbers, announcer)
 		var head := (pos.y - f.global_position.y) > 1.52 and not b.is_flame
 		var dmg := b.dmg * (2.0 if head else 1.0)
+		if b.from_player:
+			if head and skill_t > 0.0 and Settings.char_id == "nova":
+				dmg *= 1.3
+			if Settings.char_id == "nova" and pos.distance_to(player.global_position) > 25.0:
+				dmg *= 1.15
 		if f.is_remote:
 			spawn_spark(pos)                       # cosmetic; the victim reports damage
 			if b.from_player:
@@ -1611,6 +1703,9 @@ func damage_local_player(dmg: float, killer_id: int, _pos: Vector3, from_dir := 
 	# FF/PUBG style: being shot does NOT shake the world — the red arc + vignette say where
 	# it came from; only a tiny deterministic aim punch (flinch) nudges the view
 	_buzz(35)
+	if healing_t >= 0.0:
+		healing_t = -1.0
+		_announce("HEALING INTERRUPTED", Color(1.0, 0.5, 0.4))
 	if not died:
 		recoil_off.y += 0.0025
 		var side := 1.0 if from_dir.dot(_cam_right()) > 0.0 else -1.0
@@ -2302,6 +2397,10 @@ func _input(event: InputEvent) -> void:
 			Audio.play("swap")
 		return
 
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
+		_use_medkit(); return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_X:
+		_use_skill(); return
 	if event is InputEventKey and (event.keycode == KEY_Q or event.keycode == KEY_E) and not event.echo:
 		lean = (-1.0 if event.keycode == KEY_Q else 1.0) if event.pressed else 0.0
 		return
@@ -2326,6 +2425,12 @@ func _input(event: InputEvent) -> void:
 				return
 			if _btn_rect(reload_button, 10.0).has_point(event.position):
 				_start_reload()
+				return
+			if med_button and _btn_rect(med_button, 8.0).has_point(event.position):
+				_use_medkit()
+				return
+			if skill_button and _btn_rect(skill_button, 8.0).has_point(event.position):
+				_use_skill()
 				return
 			if _btn_rect(scope_button, 10.0).has_point(event.position):
 				_set_ads(not ads)
@@ -2389,7 +2494,7 @@ func _btn_rect(b: Control, pad: float) -> Rect2:
 	return b.get_global_rect().grow(pad)
 
 func _screen_on_ui(p: Vector2) -> bool:
-	return _btn_rect(nade_button, 12.0).has_point(p) or _btn_rect(jump_button, 12.0).has_point(p) or _btn_rect(reload_button, 8.0).has_point(p) or _btn_rect(scope_button, 8.0).has_point(p) \
+	return _btn_rect(nade_button, 12.0).has_point(p) or _btn_rect(jump_button, 12.0).has_point(p) or _btn_rect(reload_button, 8.0).has_point(p) or _btn_rect(scope_button, 8.0).has_point(p) or _btn_rect(med_button, 6.0).has_point(p) or _btn_rect(skill_button, 6.0).has_point(p) \
 		or _btn_rect(fire_button, 12.0).has_point(p) or _btn_rect(fire_button_l, 8.0).has_point(p) \
 		or _btn_rect(next_button, 4.0).has_point(p) or p.y < 60.0 and p.x > get_viewport().get_visible_rect().size.x - 240.0
 
@@ -2453,6 +2558,8 @@ func _register_kill(victim: String, wname: String, head: bool) -> void:
 	_kill_feed("You", victim, wname, head)
 	_bump_kills()
 	_buzz(45)
+	if Settings.char_id == "bravo":
+		player.heal(10.0)                    # Ghost passive: 10 HP per kill
 	_streak += 1
 	var now := Time.get_ticks_msec() / 1000.0
 	_multi = _multi + 1 if now - _multi_t < 3.5 else 1
@@ -2518,7 +2625,7 @@ class _KillFeed:
 		get_viewport().size_changed.connect(_layout)
 	func _layout() -> void:
 		var vp := get_viewport().get_visible_rect().size
-		_box.position = Vector2(vp.x - 320, 62 + 150)   # right column, just under the minimap
+		_box.position = Vector2(vp.x - 320, 62 + 186)   # right column, under minimap + kills
 		_box.size = Vector2(300, 0)
 	func add(killer: String, victim: String, wname: String, head: bool) -> void:
 		var l := Label.new()
@@ -2593,7 +2700,8 @@ class _Minimap:
 		var rel: Vector3 = world - game.player.global_position
 		var fwd: Vector3 = game._cam_dir(); fwd.y = 0; fwd = fwd.normalized()
 		var rgt: Vector3 = game._cam_right()
-		var p := Vector2(rel.dot(rgt), -rel.dot(fwd)) * (R / RANGE)
+		var rng: float = RANGE * (2.2 if game.reveal_t > 0.0 else 1.0)
+		var p := Vector2(rel.dot(rgt), -rel.dot(fwd)) * (R / rng)
 		if p.length() > R - 4.0:
 			p = p.normalized() * (R - 4.0)
 		return p
@@ -2614,6 +2722,12 @@ class _Minimap:
 			var pk = game.pickups[k]
 			if is_instance_valid(pk) and not pk.taken:
 				draw_circle(c + _to_map(pk.global_position), 2.2, Color(1.0, 0.85, 0.3, 0.9))
+		# airdrops (orange squares)
+		for ad in game.airdrops:
+			if is_instance_valid(ad):
+				var ap := c + _to_map(ad.global_position)
+				var blink := 0.6 + 0.4 * sin(Time.get_ticks_msec() * 0.008)
+				draw_rect(Rect2(ap - Vector2(4, 4), Vector2(8, 8)), Color(1.0, 0.5, 0.15, blink))
 		# enemies
 		for b in game.bots:
 			if is_instance_valid(b) and not b.dead:
@@ -2669,6 +2783,129 @@ class _Compass:
 				draw_line(Vector2(x, 14), Vector2(x, 20), Color(1, 1, 1, 0.5), 1.0)
 		draw_colored_polygon(PackedVector2Array([Vector2(w * 0.5, 1), Vector2(w * 0.5 - 5, -6), Vector2(w * 0.5 + 5, -6)]), Color(1, 0.8, 0.3))
 		draw_string(preload("res://assets/fonts/Rajdhani-Bold.ttf"), Vector2(w * 0.5 - 14, size.y + 12), "%d°" % int(posmod(int(heading), 360)), HORIZONTAL_ALIGNMENT_CENTER, 28, 11, Color(1, 1, 1, 0.75))
+
+## Bottom-centre vitals (PUBG / FF): boost strip, HP bar with number, thin jet-fuel strip,
+## medkit progress. Nothing is ever drawn over the local player's own head.
+func _build_vitals() -> void:
+	vitals = Control.new()
+	vitals.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(vitals)
+	var bg := ColorRect.new(); bg.color = Color(0, 0, 0, 0.42); bg.size = Vector2(324, 44); bg.position = Vector2(-12, -14); vitals.add_child(bg)
+	var bfb := ColorRect.new(); bfb.color = Color(1, 1, 1, 0.12); bfb.size = Vector2(300, 4); bfb.position = Vector2(0, -8); vitals.add_child(bfb)
+	boost_fill = ColorRect.new(); boost_fill.color = Color(1.0, 0.65, 0.15); boost_fill.size = Vector2(0, 4); boost_fill.position = Vector2(0, -8); vitals.add_child(boost_fill)
+	var hb := ColorRect.new(); hb.color = Color(1, 1, 1, 0.14); hb.size = Vector2(300, 14); hb.position = Vector2(0, 0); vitals.add_child(hb)
+	health_fill = ColorRect.new(); health_fill.color = Color(0.3, 0.9, 0.45); health_fill.size = Vector2(300, 14); vitals.add_child(health_fill)
+	var hp := Label.new(); hp.name = "HP"; hp.text = "100"
+	hp.add_theme_font_override("font", FONT_DISPLAY); hp.add_theme_font_size_override("font_size", 16)
+	hp.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9)); hp.add_theme_constant_override("outline_size", 5)
+	hp.position = Vector2(6, -6); vitals.add_child(hp)
+	var heart := Label.new(); heart.text = "♥"; heart.add_theme_font_size_override("font_size", 14); heart.add_theme_color_override("font_color", Color(1, 0.35, 0.35))
+	heart.position = Vector2(-11, -6); vitals.add_child(heart)
+	var fb := ColorRect.new(); fb.color = Color(1, 1, 1, 0.12); fb.size = Vector2(300, 5); fb.position = Vector2(0, 18); vitals.add_child(fb)
+	fuel_fill = ColorRect.new(); fuel_fill.color = Color(0.35, 0.75, 1.0); fuel_fill.size = Vector2(300, 5); fuel_fill.position = Vector2(0, 18); vitals.add_child(fuel_fill)
+	var jl := Label.new(); jl.text = "JET"; jl.add_theme_font_size_override("font_size", 9); jl.modulate = Color(0.6, 0.85, 1.0, 0.9); jl.position = Vector2(-24, 12); vitals.add_child(jl)
+	heal_bar = ColorRect.new(); heal_bar.color = Color(0, 0, 0, 0.5); heal_bar.size = Vector2(300, 6); heal_bar.position = Vector2(0, -20); heal_bar.visible = false
+	var hf := ColorRect.new(); hf.name = "fill"; hf.color = Color(0.4, 0.95, 0.5); hf.size = Vector2(0, 6); heal_bar.add_child(hf)
+	var hl := Label.new(); hl.text = "USING MEDKIT"; hl.add_theme_font_size_override("font_size", 10); hl.position = Vector2(110, -14); heal_bar.add_child(hl)
+	vitals.add_child(heal_bar)
+	_layout_vitals()
+	get_viewport().size_changed.connect(_layout_vitals)
+
+func _layout_vitals() -> void:
+	var vp := get_viewport().get_visible_rect().size
+	if vitals:
+		vitals.position = Vector2(vp.x * 0.5 - 150.0, vp.y - 52.0)
+	if weapon_label:
+		weapon_label.position = Vector2(vp.x * 0.5 + 176.0, vp.y - 76.0)
+
+## Count / cooldown text on the MED, GLOO and SKILL buttons.
+func _update_action_buttons(_delta: float) -> void:
+	if med_button and med_button.has_node("Count"):
+		(med_button.get_node("Count") as Label).text = str(medkits)
+		med_button.modulate.a = 1.0 if medkits > 0 else 0.45
+	if skill_button and skill_button.has_node("Count"):
+		var c := skill_button.get_node("Count") as Label
+		if skill_t > 0.0:
+			c.text = "%d" % int(ceil(skill_t)); skill_button.modulate = Color(1.3, 1.2, 0.8, 1.0)
+		elif skill_cd > 0.0:
+			c.text = "%d" % int(ceil(skill_cd)); skill_button.modulate = Color(1, 1, 1, 0.5)
+		else:
+			c.text = ""; skill_button.modulate = Color(1, 1, 1, 1)
+
+func _use_medkit() -> void:
+	if player.dead or match_over or healing_t >= 0.0 or medkits <= 0 or player.health >= player.max_health:
+		if medkits <= 0:
+			_announce("NO MEDKIT", Color(1, 0.5, 0.4))
+		return
+	healing_t = 0.0
+	Audio.play("swap", -4.0, 0.7)
+
+## Character skill (Free Fire style): one active per character with a cooldown.
+func _use_skill() -> void:
+	if player.dead or match_over or skill_cd > 0.0 or skill_t > 0.0:
+		return
+	var sk: Dictionary = SKILLS.get(Settings.char_id, SKILLS["bravo"])
+	skill_t = float(sk["dur"])
+	skill_cd = float(sk["cd"])
+	if Settings.char_id == "nova":
+		reveal_t = skill_t
+	_announce(String(sk["name"]), Color(1.0, 0.85, 0.35))
+	Audio.play("capture", -3.0, 1.3)
+	_buzz(40)
+
+## Airdrop: a crate parachutes in with red smoke, marked on the minimap; best loot inside.
+func _spawn_airdrop() -> void:
+	if spawns.is_empty():
+		return
+	var base: Vector3 = spawns[randi() % spawns.size()]
+	var land := Vector3(base.x + randf_range(-6.0, 6.0), 0.0, base.z + randf_range(-6.0, 6.0))
+	var drop := Node3D.new()
+	drop.position = land + Vector3(0, 46.0, 0)
+	add_child(drop)
+	var crate: Node3D = null
+	var cp := "res://assets/real/models/old_military_crate/old_military_crate_1k.gltf"
+	if ResourceLoader.exists(cp):
+		crate = load(cp).instantiate()
+		crate.scale = Vector3(1.6, 1.6, 1.6)
+		drop.add_child(crate)
+	var chute := MeshInstance3D.new()
+	var cm := CylinderMesh.new(); cm.top_radius = 0.05; cm.bottom_radius = 2.4; cm.height = 1.6; cm.radial_segments = 16
+	var cmat := StandardMaterial3D.new(); cmat.albedo_color = Color(0.95, 0.25, 0.2); cmat.cull_mode = BaseMaterial3D.CULL_DISABLED; cm.material = cmat
+	chute.mesh = cm; chute.position = Vector3(0, 2.6, 0); drop.add_child(chute)
+	airdrops.append(drop)
+	_announce("AIRDROP INCOMING", Color(1.0, 0.55, 0.3))
+	Audio.play_at("rocket", drop.position, 2.0, 0.55, 300.0)
+	var tw := create_tween()
+	tw.tween_property(drop, "position:y", 0.0, 9.0)
+	tw.parallel().tween_property(drop, "rotation:y", randf_range(-1.0, 1.0), 9.0)
+	tw.tween_callback(func() -> void:
+		if not is_instance_valid(drop):
+			return
+		chute.queue_free()
+		airdrops.erase(drop)
+		var p := Pickup3D.new()
+		p.game = self
+		p.kind = "airdrop"
+		p.spot = -1
+		p.position = drop.position
+		add_child(p)
+		airdrops.append(p)
+		drop.queue_free()
+		# red smoke column for a while
+		var sm := CPUParticles3D.new()
+		sm.amount = 40; sm.lifetime = 2.4; sm.local_coords = false
+		sm.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE; sm.emission_sphere_radius = 0.4
+		sm.direction = Vector3(0, 1, 0); sm.spread = 12.0; sm.initial_velocity_min = 2.0; sm.initial_velocity_max = 3.5
+		sm.gravity = Vector3(0, 0.6, 0); sm.scale_amount_min = 1.2; sm.scale_amount_max = 2.4
+		var q := QuadMesh.new(); q.size = Vector2(0.6, 0.6)
+		var mat := StandardMaterial3D.new(); mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED; mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES; mat.vertex_color_use_as_albedo = true; mat.albedo_texture = load("res://assets/real/fx/flame_soft.png")
+		q.material = mat; sm.mesh = q
+		sm.color_ramp = Fighter._ramp([Color(1.0, 0.2, 0.15, 0.0), Color(1.0, 0.25, 0.2, 0.55), Color(0.8, 0.2, 0.2, 0.3), Color(0.6, 0.2, 0.2, 0.0)])
+		sm.position = p.position + Vector3(0, 0.5, 0)
+		add_child(sm); sm.emitting = true
+		get_tree().create_timer(40.0).timeout.connect(func() -> void:
+			if is_instance_valid(sm): sm.queue_free()))
 
 ## Attachments picked up for the current weapon (visual on the gun + stat effects).
 func _add_attachment(a: String) -> void:

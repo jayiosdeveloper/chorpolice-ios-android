@@ -71,6 +71,7 @@ var left_handed := false
 const HUD_DEFAULTS := {
 	"fire": Vector2(0.930, 0.800), "fire_l": Vector2(0.055, 0.440), "jump": Vector2(0.828, 0.675),
 	"reload": Vector2(0.775, 0.865), "nade": Vector2(0.888, 0.915), "scope": Vector2(0.963, 0.575),
+	"med": Vector2(0.53, 0.75), "skill": Vector2(0.62, 0.75),
 }
 var hud_layout := {}
 var hud_scale := 1.0

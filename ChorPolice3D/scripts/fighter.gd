@@ -31,6 +31,11 @@ var health := 100.0
 var dead := false
 var last_hit_wname := ""             # for the kill feed
 var flinch_t := 0.0                   # bots: aim thrown off right after being hit
+var boost := 0.0                      # PUBG-style boost / FF energy: slow HP regen + a little speed
+var speed_mult := 1.0                 # healing slows, boost / skills speed up (set by the game)
+var ally := false                     # online teammate (name plate always shown)
+var _ping_t := 0.0                    # enemy plate shows briefly when hit / aimed at
+var _plate_a := 0.0
 var last_hit_by := ""
 var current_weapon := 0
 var name_text := ""
@@ -189,7 +194,7 @@ static func _ramp(cols: Array) -> Gradient:
 ## jump: rising edge → hop from the floor.
 func control(move: Vector3, want_jet: bool, jump: bool, delta: float) -> void:
 	var on_floor := is_on_floor()
-	var target := Vector3(move.x, 0, move.z) * SPEED
+	var target := Vector3(move.x, 0, move.z) * SPEED * speed_mult
 	var cur := Vector3(velocity.x, 0, velocity.z)
 	var accel: float
 	if on_floor:
@@ -312,6 +317,7 @@ func take_hit(dmg: float) -> bool:
 	if dead:
 		return false
 	health = maxf(0.0, health - dmg)
+	_ping_t = 2.5
 	_update_hp()
 	_flash()
 	if health <= 0.0:
@@ -452,6 +458,10 @@ func _build_overlay() -> void:
 	overlay.add_child(name_label)
 	_update_hp(false)
 
+## Show the enemy plate for a moment (aimed at / just hit).
+func overlay_ping(t: float) -> void:
+	_ping_t = maxf(_ping_t, t)
+
 func _team_outline() -> Color:
 	if is_remote:
 		return Color(0.95, 0.5, 0.15, 1.0)
@@ -519,7 +529,7 @@ func _update_hp(animate := true) -> void:
 
 ## Gauge faces the camera and fades with distance so far players don't clutter the view.
 func _process(_delta: float) -> void:
-	if not overlay or not overlay.visible or not _ring_mat:
+	if not overlay or not _ring_mat:
 		return
 	var cam := get_viewport().get_camera_3d()
 	if cam == null:
@@ -530,6 +540,18 @@ func _process(_delta: float) -> void:
 		overlay.rotate_object_local(Vector3.UP, PI)
 	var d := cam.global_position.distance_to(global_position)
 	var a := clampf(1.0 - (d - 14.0) / 34.0, 0.3, 1.0)
+	# FF / PUBG rule: nothing over your own head; allies always; enemies only while hit / aimed
+	var want := 0.0
+	if is_in_group("player"):
+		want = 0.0
+	elif ally:
+		want = 1.0
+	else:
+		_ping_t = maxf(0.0, _ping_t - _delta)
+		want = 1.0 if _ping_t > 0.0 else 0.0
+	_plate_a = lerpf(_plate_a, want, 1.0 - exp(-_delta * 12.0))
+	a *= _plate_a
+	overlay.visible = _plate_a > 0.02
 	name_label.modulate.a = a
 	_pct.modulate.a = a
 	_ring_mat.set_shader_parameter("alpha_mul", a)
