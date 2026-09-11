@@ -21,8 +21,9 @@ static func get_layout(index: int) -> Dictionary:
 		2: l = _subdivision()
 		3: l = _ice_box()
 		4: l = _crossfire()
+		6: l = _dustline()
 		_: l = _green_hills()
-	var m := Maps.get_map(i)
+	var m := Maps.get_map(index)          # Maps.get_map maps through ORDER itself
 	l["name"] = m["name"]
 	l["theme"] = m["theme"]
 	return l
@@ -412,4 +413,94 @@ static func _green_hills() -> Dictionary:
 	l["pickups"] = [_v(0, 0, 4.3), _v(-26, 18, 2.9), _v(26, -18, 3.5), _v(-42, 30, 3.3), _v(-26, -18, 0.3), _v(32, 30, 0.3), _v(0, -18, 0.3), _v(0, 18, 0.3), _v(-36, 0, 0.3), _v(36, 0, 0.3), _v(-30, -30, 0.3), _v(30, -24, 0.3)]
 	l["platforms"] = []
 	l["ramps"] = []
+	return l
+
+
+# MARK: 7 — Dustline (200 x 200): planned desert town — 3x3 zoning, roads, enterable houses
+
+## HouseKit house entry (centre position, yaw, cells spec, style).
+static func _h(x: float, z: float, yaw: float, spec: Dictionary, style := "concrete") -> Dictionary:
+	return {"pos": Vector3(x, 0, z), "yaw": yaw, "spec": spec, "style": style}
+
+static func _dustline() -> Dictionary:
+	var l := {
+		"size": Vector2(200, 200),
+		"grounds": [Rect2(-100, -100, 200, 200)],
+		"blocks": [], "platforms": [], "ramps": [], "structures": [], "trees": [],
+		"spawns": [], "pickups": [], "bases": [Vector3(-75, 0, 0), Vector3(75, 0, 0)],
+		"real": true, "real_sky": "coast", "real_tree": "quiver_tree_01", "scatter": false, "nav": true, "island": true,
+		"real_trees": [
+			{"model": "maple_tree", "h": 6.5}, {"model": "realistic_hd_bamboo_palm_930", "h": 4.5},
+			{"model": "realistic_hd_cabbage_tree_950", "h": 4.0}, {"model": "realistic_hd_royal_poinciana_1940", "h": 7.0},
+		],
+		"real_props": ["Barrel_01", "Barrel_02", "barrel_03", "ammo_box", "old_military_crate", "wooden_crate_01", "plastic_crate_02", "propane_tank", "moon_rock_02", "moon_rock_04"],
+		"real_surfaces": {"ground": "desert_sand", "rock": "rock", "wall": "concrete", "concrete": "concrete", "metal": "metal_rusted",
+			"wood": "wood_planks", "sandbag": "sandbag_fabric", "brick": "brick", "roof": "roof_tiles", "road": "asphalt"},
+		"real_place": [
+			{"model": "gta_6_prison_tower__guard_tower__watchtower", "pos": Vector3(14, 0, 12), "yaw": 0.6, "len": 7.0, "collide": "trimesh"},
+			{"model": "brick_home", "pos": Vector3(-58, 0, 44), "yaw": 0.4, "len": 15.0, "collide": "trimesh"},
+			{"model": "container_home", "pos": Vector3(40, 0, -60), "yaw": -0.6, "len": 17.0, "collide": "trimesh", "sink": 2.6},
+			{"model": "shipping_containers", "pos": Vector3(-30, 0, -10), "yaw": 1.57, "scale": 0.7, "collide": "trimesh"},
+			{"model": "shipping_containers", "pos": Vector3(30, 0, 10), "yaw": 1.57, "scale": 0.7, "collide": "trimesh"},
+			{"model": "shipping_containers", "pos": Vector3(-8, 0, 56), "yaw": 0.0, "scale": 0.75, "collide": "trimesh"},
+			{"model": "shipping_containers", "pos": Vector3(12, 0, 68), "yaw": 3.14, "scale": 0.75, "collide": "trimesh"},
+			{"model": "meshy_house", "pos": Vector3(54, 0, 42), "yaw": 0.0, "len": 11.0, "collide": "trimesh"},
+			{"model": "meshy_house2", "pos": Vector3(-52, 0, -40), "yaw": 0.0, "len": 16.0, "collide": "trimesh"},
+		],
+		# roads: N-S, E-W (broken by the centre compound) + ring road around HQ
+		"roads": [
+			{"from": Vector3(0, 0, -100), "to": Vector3(0, 0, -22), "w": 6.0}, {"from": Vector3(0, 0, 22), "to": Vector3(0, 0, 100), "w": 6.0},
+			{"from": Vector3(-100, 0, 0), "to": Vector3(-22, 0, 0), "w": 6.0}, {"from": Vector3(22, 0, 0), "to": Vector3(100, 0, 0), "w": 6.0},
+			{"from": Vector3(-22, 0, -20), "to": Vector3(22, 0, -20), "w": 4.0}, {"from": Vector3(-22, 0, 20), "to": Vector3(22, 0, 20), "w": 4.0},
+			{"from": Vector3(-22, 0, -20), "to": Vector3(-22, 0, 20), "w": 4.0}, {"from": Vector3(22, 0, -20), "to": Vector3(22, 0, 20), "w": 4.0},
+		],
+		"houses": [
+			_h(0, -8, 0.0, {"w": 8, "d": 6, "floors": 4, "doors": [["S", 3], ["N", 4]], "windows": [["S", 0, 0], ["S", 6, 0], ["S", 1, 1], ["S", 5, 1], ["S", 2, 2], ["S", 4, 2], ["S", 1, 3], ["S", 5, 3], ["N", 1, 0], ["N", 6, 1], ["N", 2, 2], ["N", 5, 3], ["E", 1, 0], ["E", 3, 1], ["E", 2, 2], ["E", 4, 3], ["W", 1, 1], ["W", 4, 0], ["W", 2, 2], ["W", 3, 3]], "stairs": [7, 0], "roof": "flat", "inner": [[4, 0, 3, "z", 1]], "seed": 11}, "sandstone"),
+			_h(74, -4, 0.0, {"w": 7, "d": 5, "floors": 3, "doors": [["W", 2], ["E", 2]], "windows": [["W", 0, 0], ["W", 4, 1], ["W", 2, 2], ["N", 2, 0], ["N", 4, 1], ["S", 3, 1], ["S", 1, 2], ["E", 0, 1], ["E", 4, 2]], "stairs": [6, 0], "roof": "flat", "inner": [[3, 0, 2, "z", 0]], "seed": 23}, "redbrick"),
+			_h(0, 78, 0.0, {"w": 7, "d": 5, "floors": 3, "doors": [["N", 3], ["S", 1]], "windows": [["N", 0, 0], ["N", 6, 1], ["N", 2, 2], ["E", 2, 0], ["E", 1, 2], ["W", 1, 1], ["S", 5, 1], ["S", 3, 2]], "stairs": [0, 0], "roof": "flat", "seed": 37}, "whitewash"),
+			_h(-18, -70, 0.0, {"w": 6, "d": 4, "floors": 2, "doors": [["S", 2]], "windows": [["S", 0, 0], ["S", 5, 0], ["S", 1, 1], ["S", 4, 1], ["N", 2, 0], ["N", 3, 1]], "stairs": [5, 0], "roof": "flat", "inner": [[3, 0, 2, "z", 1]], "seed": 41}, "stone"),
+			_h(18, -70, 0.0, {"w": 6, "d": 4, "floors": 2, "doors": [["S", 3]], "windows": [["S", 1, 0], ["S", 4, 1], ["N", 4, 0], ["N", 1, 1], ["E", 1, 0], ["E", 2, 1]], "stairs": [0, 0], "roof": "flat", "inner": [[3, 0, 2, "z", 1]], "seed": 43}, "metal"),
+			_h(-70, -18, 0.26, {"w": 6, "d": 4, "floors": 5, "doors": [["E", 1], ["S", 4]], "windows": [["S", 1, 0], ["S", 3, 1], ["S", 1, 2], ["S", 4, 3], ["S", 2, 4], ["N", 3, 0], ["N", 1, 1], ["N", 4, 2], ["N", 2, 3], ["N", 4, 4], ["W", 2, 0], ["W", 1, 1], ["W", 2, 2], ["W", 1, 3], ["W", 2, 4], ["E", 2, 1], ["E", 1, 2], ["E", 2, 3], ["E", 1, 4]], "stairs": [5, 0], "roof": "flat", "seed": 53}, "concrete"),
+			_h(-40, 40, -0.35, {"w": 6, "d": 4, "floors": 2, "doors": [["N", 2], ["E", 2]], "windows": [["N", 5, 0], ["N", 1, 1], ["S", 2, 0], ["S", 4, 1], ["W", 1, 1]], "stairs": [5, 0], "roof": "flat", "inner": [[2, 0, 2, "z", 1]], "seed": 59}, "sandstone"),
+			_h(-80, -4, 0.0, {"w": 3, "d": 3, "floors": 2, "doors": [["E", 1]], "windows": [["N", 1, 0], ["W", 1, 1], ["S", 1, 1]], "stairs": [0, 0], "roof": "gable", "seed": 61}, "stone"),
+			_h(-76, 14, 0.35, {"w": 3, "d": 3, "floors": 3, "doors": [["N", 1]], "windows": [["E", 1, 0], ["E", 1, 1], ["W", 1, 2], ["S", 1, 1]], "stairs": [0, 0], "roof": "flat", "seed": 67}, "whitewash"),
+			_h(70, 16, 0.0, {"w": 4, "d": 3, "floors": 2, "doors": [["W", 1]], "windows": [["S", 1, 0], ["S", 2, 1], ["N", 1, 1], ["E", 1, 0]], "stairs": [3, 0], "roof": "flat", "seed": 71}, "redbrick"),
+			_h(84, 10, 0.0, {"w": 3, "d": 3, "floors": 4, "doors": [["W", 1]], "windows": [["N", 1, 0], ["N", 1, 2], ["S", 1, 1], ["S", 1, 3], ["E", 1, 1], ["E", 1, 2]], "stairs": [0, 0], "roof": "flat", "seed": 73}, "metal"),
+			_h(44, -44, 0.5, {"w": 4, "d": 3, "floors": 3, "doors": [["S", 1]], "windows": [["E", 1, 0], ["E", 1, 1], ["W", 1, 2], ["N", 2, 1], ["S", 2, 2]], "stairs": [3, 0], "roof": "flat", "seed": 79}, "sandstone"),
+			_h(-72, 72, 0.0, {"w": 3, "d": 3, "floors": 2, "doors": [["N", 1]], "windows": [["W", 1, 0], ["E", 1, 1], ["S", 1, 1]], "stairs": [0, 0], "roof": "gable", "seed": 83}, "stone"),
+			_h(0, -84, 0.0, {"w": 10, "d": 7, "floors": 2, "open": true, "doors": [["S", 4], ["S", 5], ["N", 2]], "windows": [["S", 1, 1], ["S", 8, 1], ["E", 3, 1], ["W", 3, 1]], "roof": "flat", "roof_stairs": false, "seed": 89}, "metal"),
+		],
+	}
+	var b: Array = l["blocks"]
+	# south depot: container yard (high cover grid)
+	for x in [-16, 0, 16]:
+		for z in [60, 66]:
+			b.append(_b(x, 0, z, 12.0, 2.6, 2.5, "container"))
+	b.append(_b(-26, 0, 66, 2.5, 2.6, 12.0, "container")); b.append(_b(26, 0, 66, 2.5, 2.6, 12.0, "container"))
+	b.append(_b(0, 2.6, 60, 12.0, 2.6, 2.5, "container"))                    # stacked
+	# staggered road barriers (no open death lanes)
+	for pr in [[-6, -40], [6, -52], [-6, -64], [6, 40], [-6, 52]]:
+		b.append(_b(pr[0], 0, pr[1], 4.0, 1.0, 0.8, "barrier"))
+	for pr in [[-40, -6], [-52, 6], [40, 6], [52, -6]]:
+		b.append(_b(pr[0], 0, pr[1], 0.8, 1.0, 4.0, "barrier"))
+	# HQ sandbag ring
+	b.append(_b(0, 0, 6, 10.0, 1.0, 1.0, "barrier")); b.append(_b(-12, 0, -8, 1.0, 1.0, 10.0, "barrier")); b.append(_b(12, 0, -8, 1.0, 1.0, 10.0, "barrier")); b.append(_b(0, 0, -20, 10.0, 1.0, 1.0, "barrier"))
+	# landmarks: water tank (N), fuel tank (W), masts (S / E), crane-ish gantry (S)
+	b.append(_b(0, 0, -96, 5.0, 7.0, 5.0, "metal")); b.append(_b(-90, 0, 0, 5.0, 3.0, 5.0, "metal"))
+	b.append(_b(12, 0, 90, 0.5, 14.0, 0.5, "metal")); b.append(_b(88, 0, -16, 0.5, 12.0, 0.5, "metal"))
+	# wrecks (mid cover) + crate clusters near buildings
+	for pr in [[-46, -30], [46, 30], [30, -60]]:
+		b.append(_b(pr[0], 0, pr[1], 4.2, 1.5, 2.0, "metal"))
+	for pr in [[-62, -8], [-66, 8], [64, -14], [78, 20], [-24, -56], [24, -56], [-30, 58], [30, 58], [-10, 10], [10, -30]]:
+		b.append(_b(pr[0], 0, pr[1], 1.6, 1.6, 1.6))
+	# corner rocks (low cover around spawns)
+	for pr in [[-82, -78], [-74, -86], [-88, -66], [82, -78], [74, -86], [88, -66], [-82, 78], [-74, 86], [-88, 66], [82, 78], [74, 86], [88, 66], [-92, -40], [92, 40]]:
+		b.append(_b(pr[0], 0, pr[1], 3.0, 2.0, 2.4, "rock"))
+	# (mounds removed — the tilted sand slabs looked bad next to the houses)
+	l["structures"] = [_s(-56, 0, 0, "bunker", PI / 2), _s(56, 0, 0, "bunker", -PI / 2), _s(-90, 0, -90, "tower"), _s(90, 0, 90, "tower")]
+	var t: Array = l["trees"]
+	for pp in [[-60, -40], [-56, -34], [-64, -44], [58, 40], [54, 34], [62, 44], [-90, 40], [-86, 34], [90, -40], [86, -34], [-30, -88], [30, 88], [-50, 20], [50, -20], [-20, 30], [20, -32]]:
+		t.append(Vector3(pp[0], 0, pp[1]))
+	l["spawns"] = [_v(-84, -84), _v(-70, -80), _v(-84, -70), _v(84, -84), _v(70, -80), _v(84, -70), _v(-84, 84), _v(-70, 80), _v(-84, 70), _v(84, 84), _v(70, 80), _v(84, 70)]
+	l["pickups"] = [_v(0, 12), _v(0, -2, 2.4), _v(74, -4, 2.4), _v(0, 78, 2.4), _v(-18, -70), _v(18, -70), _v(-70, -18), _v(-40, 40), _v(0, -84), _v(-80, -4), _v(84, 10), _v(44, -44), _v(-72, 72), _v(-76, 14), _v(70, 16), _v(-30, 0), _v(30, 0), _v(0, -50), _v(0, 50)]
 	return l

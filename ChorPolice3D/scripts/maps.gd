@@ -6,7 +6,7 @@
 class_name Maps
 extends RefCounted
 
-const ORDER := [0, 5]   # active maps: Outpost, Green Hills
+const ORDER := [0, 5, 6]   # active maps: Outpost, Green Hills, Dustline
 
 static func count() -> int:
 	return ORDER.size()
@@ -18,6 +18,7 @@ static func get_map(index: int) -> Dictionary:
 		1: return _high_tower()
 		2: return _subdivision()
 		3: return _ice_box()
+		6: return _dustline()
 		4: return _crossfire()
 		_: return _green_hills()
 
@@ -57,6 +58,14 @@ static func _outpost() -> Dictionary:
 		"spawns": [Vector2(250, 170), Vector2(980, 520), Vector2(1950, 370), Vector2(3500, 370), Vector2(4180, 370), Vector2(5050, 370), Vector2(6520, 370), Vector2(7220, 370)],
 		"pickups": [Vector2(620, 360), Vector2(1430, 420), Vector2(1950, 360), Vector2(2430, 530), Vector2(3000, 410), Vector2(3870, 510), Vector2(4520, 440), Vector2(5050, 360), Vector2(6020, 420), Vector2(6900, 510), Vector2(7220, 360)],
 	}
+
+## 7 — Dustline: 200 x 200 m desert town / outpost (FF-PUBG style planned map)
+static func _dustline() -> Dictionary:
+	var d := _outpost()
+	d["name"] = "Dustline"; d["short"] = "Dustline"
+	d["theme"] = d["theme"].duplicate(true)
+	d["theme"]["weather"] = "none"
+	return d
 
 # MARK: 2 — High Tower (central mega-tower over a huge pit)
 

@@ -74,6 +74,8 @@ var boost_fill: ColorRect
 var vitals: Control
 var med_button: Control
 var skill_button: Control
+var door_button: Control
+var _near_door: Node = null
 var skill_cd := 0.0                  # seconds until the character skill is ready
 var skill_t := 0.0                   # seconds of active skill left
 var reveal_t := 0.0                  # Nova: enemies shown on the minimap regardless of range
@@ -149,6 +151,11 @@ var weapon_label: Label
 var kills_label: Label
 const FONT_UI: Font = preload("res://assets/fonts/Rajdhani-Bold.ttf")
 const FONT_DISPLAY: Font = preload("res://assets/fonts/RussoOne-Regular.ttf")
+const FONT_MONO: Font = preload("res://assets/fonts/ShareTechMono-Regular.ttf")
+const C_CYAN := Color(0.0, 0.94, 1.0)
+const C_AMBER := Color(1.0, 0.667, 0.0)
+const C_CRIMSON := Color(1.0, 0.165, 0.318)
+const C_EMERALD := Color(0.0, 1.0, 0.533)
 var timer_label: Label
 var nade_button: Control
 var jump_button: Control
@@ -296,7 +303,7 @@ func _build_camera() -> void:
 	cam = Camera3D.new()
 	cam.fov = 72.0
 	cam.near = 0.08
-	cam.far = 260.0
+	cam.far = maxf(260.0, (layout["size"] as Vector2).length() * 1.6)
 	add_child(cam)
 	cam.current = true
 	_update_camera(1.0, true)
@@ -447,7 +454,7 @@ func _build_hud() -> void:
 	hud.add_child(timer_label)
 
 	var name_label := Label.new()
-	name_label.text = "%s    (map %d/6)" % [layout["name"], MatchCfg.map_index + 1]
+	name_label.text = "%s    (map %d/%d)" % [layout["name"], MatchCfg.map_index + 1, Maps.count()]
 	name_label.add_theme_font_size_override("font_size", 13)
 	name_label.modulate = Color(1, 1, 1, 0.55)
 	name_label.anchor_left = 0.0; name_label.anchor_right = 1.0
@@ -510,6 +517,7 @@ func _build_hud() -> void:
 	scope_button = HudKit.make("scope", hs * Settings.hud_size_of("scope")); hud.add_child(scope_button)
 	med_button = HudKit.make("med", hs * Settings.hud_size_of("med")); hud.add_child(med_button)
 	skill_button = HudKit.make("skill", hs * Settings.hud_size_of("skill")); hud.add_child(skill_button)
+	door_button = HudKit.make("door", hs * Settings.hud_size_of("door")); hud.add_child(door_button); door_button.visible = false
 	reticle = _Reticle.new()
 	reticle.set_anchors_preset(Control.PRESET_FULL_RECT)
 	reticle.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -531,7 +539,7 @@ func _build_hud() -> void:
 	if lowhp_rect:
 		hud.move_child(scope_glass, lowhp_rect.get_index() + 1)     # over the 3D view
 		hud.move_child(scope_overlay, lowhp_rect.get_index() + 2)   # reticle on top of the glass, under buttons
-	for pair in [[nade_button, "nade"], [jump_button, "jump"], [fire_button, "fire"], [fire_button_l, "fire_l"], [reload_button, "reload"], [scope_button, "scope"], [med_button, "med"], [skill_button, "skill"]]:
+	for pair in [[nade_button, "nade"], [jump_button, "jump"], [fire_button, "fire"], [fire_button_l, "fire_l"], [reload_button, "reload"], [scope_button, "scope"], [med_button, "med"], [skill_button, "skill"], [door_button, "door"]]:
 		HudKit.place(pair[0], Settings.hud_center(pair[1], vp))
 
 	# grenade trajectory markers (3D, hidden until dragging)
@@ -1013,9 +1021,13 @@ func _physics_process(delta: float) -> void:
 	var hf := clampf(player.health / player.max_health, 0.0, 1.0)
 	health_fill.color = Color(0.3, 0.9, 0.45) if hf > 0.5 else (Color(0.95, 0.78, 0.2) if hf > 0.25 else Color(0.95, 0.3, 0.25))
 	if vitals and vitals.has_node("HP"):
-		(vitals.get_node("HP") as Label).text = "%d" % int(round(player.health))
+		(vitals.get_node("HP") as Label).text = "HP  %d / %d" % [int(round(player.health)), int(player.max_health)]
 	if boost_fill:
 		boost_fill.size.x = 300.0 * clampf(player.boost / 100.0, 0.0, 1.0)
+	if pcard_hp:
+		pcard_hp.size.x = 150.0 * hf
+		pcard_hp.color = health_fill.color
+		pcard_sh.size.x = 150.0 * clampf(player.boost / 100.0, 0.0, 1.0)
 	if heal_bar:
 		heal_bar.visible = healing_t >= 0.0
 		if healing_t >= 0.0:
@@ -2329,6 +2341,35 @@ func _show_incoming(n: int) -> void:
 	tw.tween_property(l, "modulate:a", 0.0, 0.4)
 	tw.tween_callback(l.queue_free)
 
+## Direction for a bot towards `target` along the navmesh (falls back to `fallback`
+## when the map has no navmesh yet).
+func _nav_dir(b: Fighter, target: Vector3, fallback: Vector3) -> Vector3:
+	if not arena or not arena.nav_ready:
+		b.nav_path = []
+		return fallback
+	var map_rid := get_world_3d().navigation_map
+	var from := NavigationServer3D.map_get_closest_point(map_rid, b.global_position)
+	var to := NavigationServer3D.map_get_closest_point(map_rid, target)
+	b.nav_path = NavigationServer3D.map_get_path(map_rid, from, to, true)
+	b.nav_i = 1 if b.nav_path.size() > 1 else 0
+	if b.nav_path.is_empty():
+		return fallback
+	var nxt: Vector3 = b.nav_path[b.nav_i]
+	var d := nxt - b.global_position; d.y = 0.0
+	return d.normalized() if d.length() > 0.05 else fallback
+
+## Advance along the stored path each frame (drops points once reached).
+func _nav_follow(b: Fighter) -> void:
+	while b.nav_i < b.nav_path.size():
+		var pt: Vector3 = b.nav_path[b.nav_i]
+		var d := pt - b.global_position; d.y = 0.0
+		if d.length() < 0.9:
+			b.nav_i += 1
+			continue
+		b.move_dir = d.normalized()
+		return
+	b.nav_path = []
+
 func _run_bot_ai(b: Fighter, delta: float) -> void:
 	var prof := _profile()
 	var to := player.global_position - b.global_position
@@ -2345,12 +2386,12 @@ func _run_bot_ai(b: Fighter, delta: float) -> void:
 		var q := PhysicsRayQueryParameters3D.create(b.eye_position(), player.global_position + Vector3(0, 1.0, 0), 1)
 		b.los = get_world_3d().direct_space_state.intersect_ray(q).is_empty()
 		if not player.dead and not b.los:
-			# hunt: close in on the player's position until we see them
-			b.move_dir = (toward + side * b.strafe_sign * 0.2).normalized()
+			# hunt: path through the town (navmesh) towards the player until we see them
+			b.move_dir = _nav_dir(b, player.global_position, (toward + side * b.strafe_sign * 0.2).normalized())
 			b.wants_dodge = false
 		elif not player.dead and randf() < float(prof["chaseBias"]):
 			if dist > float(prof["standoff"]) + 2.0:
-				b.move_dir = (toward + side * b.strafe_sign * 0.35).normalized()
+				b.move_dir = _nav_dir(b, player.global_position, (toward + side * b.strafe_sign * 0.35).normalized())
 			elif dist < float(prof["standoff"]) - 2.0:
 				b.move_dir = (-toward + side * b.strafe_sign * 0.5).normalized()
 			else:
@@ -2360,7 +2401,9 @@ func _run_bot_ai(b: Fighter, delta: float) -> void:
 		b.wants_dodge = randf() < float(prof["dodgeProb"])
 		if b.wants_dodge:
 			b.move_dir = side * b.strafe_sign
-	if b.is_on_wall() and b.think_t > 0.2:
+	if b.nav_path.size() > 0:
+		_nav_follow(b)
+	if b.is_on_wall() and b.think_t > 0.2 and b.nav_path.is_empty():
 		b.move_dir = b.move_dir.rotated(Vector3.UP, 1.2)
 		b.think_t = 0.2
 
@@ -2418,6 +2461,8 @@ func _input(event: InputEvent) -> void:
 		_use_medkit(); return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_X:
 		_use_skill(); return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_E and _near_door:
+		_near_door.toggle(); return
 	if event is InputEventKey and (event.keycode == KEY_Q or event.keycode == KEY_E) and not event.echo:
 		lean = (-1.0 if event.keycode == KEY_Q else 1.0) if event.pressed else 0.0
 		return
@@ -2442,6 +2487,9 @@ func _input(event: InputEvent) -> void:
 				return
 			if skill_button and _btn_rect(skill_button, 8.0).has_point(event.position):
 				_use_skill()
+				return
+			if door_button and door_button.visible and _btn_rect(door_button, 8.0).has_point(event.position):
+				if _near_door: _near_door.toggle()
 				return
 			if _btn_rect(scope_button, 10.0).has_point(event.position):
 				_set_ads(not ads)
@@ -2505,7 +2553,7 @@ func _btn_rect(b: Control, pad: float) -> Rect2:
 	return b.get_global_rect().grow(pad)
 
 func _screen_on_ui(p: Vector2) -> bool:
-	return _btn_rect(nade_button, 12.0).has_point(p) or _btn_rect(jump_button, 12.0).has_point(p) or _btn_rect(reload_button, 8.0).has_point(p) or _btn_rect(scope_button, 8.0).has_point(p) or _btn_rect(med_button, 6.0).has_point(p) or _btn_rect(skill_button, 6.0).has_point(p) \
+	return _btn_rect(nade_button, 12.0).has_point(p) or _btn_rect(jump_button, 12.0).has_point(p) or _btn_rect(reload_button, 8.0).has_point(p) or _btn_rect(scope_button, 8.0).has_point(p) or _btn_rect(med_button, 6.0).has_point(p) or _btn_rect(skill_button, 6.0).has_point(p) or (door_button != null and door_button.visible and _btn_rect(door_button, 6.0).has_point(p)) \
 		or _btn_rect(fire_button, 12.0).has_point(p) or _btn_rect(fire_button_l, 8.0).has_point(p) \
 		or _btn_rect(next_button, 4.0).has_point(p) or p.y < 60.0 and p.x > get_viewport().get_visible_rect().size.x - 240.0
 
@@ -2825,6 +2873,11 @@ func _build_vitals() -> void:
 	_layout_vitals()
 	get_viewport().size_changed.connect(_layout_vitals)
 
+var pcard: Control
+var pcard_hp: ColorRect
+var pcard_sh: ColorRect
+
+## Top-left squad-leader card from the APEX design (compact: avatar, name, LV, shield + HP).
 func _layout_vitals() -> void:
 	var vp := get_viewport().get_visible_rect().size
 	if vitals:
@@ -2834,17 +2887,32 @@ func _layout_vitals() -> void:
 
 ## Count / cooldown text on the MED, GLOO and SKILL buttons.
 func _update_action_buttons(_delta: float) -> void:
+	_near_door = null
+	var best_dd := 2.6
+	for dn in get_tree().get_nodes_in_group("doors"):
+		if dn is Node3D:
+			var dd: float = (dn as Node3D).global_position.distance_to(player.global_position)
+			if dd < best_dd:
+				best_dd = dd; _near_door = dn
+	if door_button:
+		door_button.visible = _near_door != null
+		if _near_door and door_button.has_node("Count"):
+			(door_button.get_node("Count") as Label).text = "▲" if not _near_door.is_open else "▼"
 	if med_button and med_button.has_node("Count"):
 		(med_button.get_node("Count") as Label).text = str(medkits)
 		med_button.modulate.a = 1.0 if medkits > 0 else 0.45
 	if skill_button and skill_button.has_node("Count"):
 		var c := skill_button.get_node("Count") as Label
 		if skill_t > 0.0:
-			c.text = "%d" % int(ceil(skill_t)); skill_button.modulate = Color(1.3, 1.2, 0.8, 1.0)
+			c.text = "%d" % int(ceil(skill_t)); skill_button.modulate = Color(1.25, 1.2, 0.9, 1.0); HudKit.set_cooldown(skill_button, 0.0)
 		elif skill_cd > 0.0:
-			c.text = "%d" % int(ceil(skill_cd)); skill_button.modulate = Color(1, 1, 1, 0.5)
+			c.text = ""; skill_button.modulate = Color(1, 1, 1, 1); HudKit.set_cooldown(skill_button, skill_cd)
 		else:
-			c.text = ""; skill_button.modulate = Color(1, 1, 1, 1)
+			c.text = ""; skill_button.modulate = Color(1, 1, 1, 1); HudKit.set_cooldown(skill_button, 0.0)
+	if nade_button and nade_button.has_node("Count"):
+		(nade_button.get_node("Count") as Label).text = "∞" if unlimited_ammo else str(grenades)
+	if fire_button:
+		HudKit.set_pressed(fire_button, (not fire_ids.is_empty()) or mouse_fire)
 
 func _use_medkit() -> void:
 	if player.dead or match_over or healing_t >= 0.0 or medkits <= 0 or player.health >= player.max_health:

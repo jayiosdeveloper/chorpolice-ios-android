@@ -5,8 +5,27 @@
 class_name HudKit
 extends RefCounted
 
-const KINDS := ["fire", "fire_l", "jump", "reload", "nade", "scope", "med", "skill"]
-const NAMES := {"fire": "FIRE", "fire_l": "FIRE (left)", "jump": "JUMP", "reload": "RELOAD", "nade": "GRENADE", "scope": "SCOPE", "med": "MEDKIT", "skill": "SKILL"}
+const KINDS := ["fire", "fire_l", "jump", "reload", "nade", "scope", "med", "skill", "door"]
+const NAMES := {"fire": "FIRE", "fire_l": "FIRE (left)", "jump": "JUMP", "reload": "RELOAD", "nade": "GRENADE", "scope": "SCOPE", "med": "MEDKIT", "skill": "SKILL", "door": "DOOR"}
+
+const CYAN := Color(0.0, 0.94, 1.0)
+const AMBER := Color(1.0, 0.667, 0.0)
+const CRIMSON := Color(1.0, 0.165, 0.318)
+const EMERALD := Color(0.0, 1.0, 0.533)
+const GUNMETAL := Color(0.047, 0.067, 0.102, 0.78)
+const FONT_MONO := "res://assets/fonts/ShareTechMono-Regular.ttf"
+const FONT_HERO := "res://assets/fonts/ChakraPetch-Bold.ttf"
+# kind -> [size px, shape (oct / oct_sm / tlbr / round), accent colour, icon, caption]
+const SPEC := {
+	"fire":   [96, "oct", CRIMSON, "fire", "FIRE"],
+	"fire_l": [64, "oct", CRIMSON, "fire", "FIRE"],
+	"nade":   [62, "oct_sm", AMBER, "nade", "FRAG"],
+	"med":    [58, "oct_sm", EMERALD, "med", "MED"],
+	"skill":  [66, "tlbr", CYAN, "skill", "SKILL"],
+	"jump":   [58, "tlbr", CYAN, "jump", "VAULT"],
+	"scope":  [64, "tlbr", CYAN, "scope", "ADS"],
+	"reload": [54, "oct_sm", AMBER, "reload", "RELOAD"],
+}
 
 static func make(kind: String, scl := 1.0) -> Control:
 	var c: Control
@@ -18,11 +37,103 @@ static func make(kind: String, scl := 1.0) -> Control:
 		"scope": c = _scope()
 		"med": c = _glyph_btn("✚", "MED", Color(0.35, 0.95, 0.5), 30)
 		"skill": c = _glyph_btn("★", "SKILL", Color(1.0, 0.8, 0.3), 34)
+		"door": c = _glyph_btn("⌂", "DOOR", Color(0.6, 0.9, 1.0), 28)
 		_: c = _nade()
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	c.scale = Vector2(scl, scl)
 	c.set_meta("kind", kind)
 	return c
+
+## Stitch "APEX-9" tactical button: smoked gunmetal glass, chamfered, coloured glow rim,
+## vector icon, mono caption, count badge, cooldown mask and pressed flash.
+static func _apex(kind: String) -> Control:
+	var sp: Array = SPEC[kind]
+	var sz: float = float(sp[0]); var shape: String = sp[1]; var col: Color = sp[2]; var icon: String = sp[3]; var cap: String = sp[4]
+	var c := Control.new()
+	c.size = Vector2(sz, sz)
+	var cut := 10.0 if shape == "oct" else (6.0 if shape == "oct_sm" else 12.0)
+	var tlbr := shape == "tlbr"
+	# outer glow
+	var glow := Shapes.chamfer(Vector2(sz + 10, sz + 10), cut + 3, Color(col.r, col.g, col.b, 0.16), tlbr); glow.position = Vector2(-5, -5); c.add_child(glow)
+	# rim + glass fill
+	var rim := Shapes.chamfer(Vector2(sz, sz), cut, Color(col.r, col.g, col.b, 0.75), tlbr); c.add_child(rim)
+	var fill_col := GUNMETAL.lerp(Color(col.r, col.g, col.b, 0.78), 0.14 if kind != "fire" else 0.28)
+	var fill := Shapes.chamfer(Vector2(sz - 4, sz - 4), maxf(cut - 2, 2), fill_col, tlbr); fill.position = Vector2(2, 2); c.add_child(fill)
+	if kind == "fire":
+		var inner := Shapes.chamfer(Vector2(sz - 16, sz - 16), maxf(cut - 4, 2), Color(col.r, col.g, col.b, 0.28), false); inner.position = Vector2(8, 8); c.add_child(inner)
+		var inner2 := Shapes.chamfer(Vector2(sz - 19, sz - 19), maxf(cut - 5, 2), fill_col, false); inner2.position = Vector2(9.5, 9.5); c.add_child(inner2)
+	# icon
+	var isz := sz * (0.42 if kind == "fire" else 0.40)
+	var ic := TextureRect.new()
+	var ip := "res://assets/icons/apex/%s.svg" % icon
+	if ResourceLoader.exists(ip):
+		ic.texture = load(ip)
+	ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	ic.size = Vector2(isz, isz)
+	ic.position = Vector2(sz / 2.0 - isz / 2.0, sz * 0.5 - isz / 2.0 - sz * 0.10)
+	ic.modulate = col if kind != "jump" else Color(1, 1, 1, 0.95)
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ic.name = "Icon"
+	c.add_child(ic)
+	# caption (mono)
+	var l := Label.new()
+	l.name = "Cap"
+	l.text = cap
+	if ResourceLoader.exists(FONT_MONO):
+		l.add_theme_font_override("font", load(FONT_MONO))
+	l.add_theme_font_size_override("font_size", 12 if kind == "fire" else 9)
+	l.add_theme_color_override("font_color", Color(1, 1, 1, 0.9) if kind == "fire" else Color(col.r, col.g, col.b, 0.95))
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.size = Vector2(sz, 14)
+	l.position = Vector2(0, sz - (24 if kind == "fire" else 19))
+	c.add_child(l)
+	# count badge (top-right)
+	var n := Label.new()
+	n.name = "Count"
+	n.text = ""
+	if ResourceLoader.exists(FONT_MONO):
+		n.add_theme_font_override("font", load(FONT_MONO))
+	n.add_theme_font_size_override("font_size", 11)
+	n.add_theme_color_override("font_color", col)
+	n.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	n.add_theme_constant_override("outline_size", 4)
+	n.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	n.size = Vector2(22, 16)
+	n.position = Vector2(sz - 20, -4)
+	c.add_child(n)
+	# cooldown mask (hidden): dark chamfer + seconds
+	var cd := Control.new(); cd.name = "Cd"; cd.visible = false; cd.size = Vector2(sz, sz); cd.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var cdm := Shapes.chamfer(Vector2(sz - 4, sz - 4), maxf(cut - 2, 2), Color(0, 0, 0, 0.74), tlbr); cdm.position = Vector2(2, 2); cd.add_child(cdm)
+	var cdl := Label.new(); cdl.name = "Secs"; cdl.text = "8s"
+	if ResourceLoader.exists(FONT_HERO):
+		cdl.add_theme_font_override("font", load(FONT_HERO))
+	cdl.add_theme_font_size_override("font_size", int(sz * 0.3)); cdl.add_theme_color_override("font_color", AMBER)
+	cdl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; cdl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER; cdl.size = Vector2(sz, sz)
+	cd.add_child(cdl); c.add_child(cd)
+	# pressed flash (hidden): solid accent fill
+	var pr := Shapes.chamfer(Vector2(sz - 4, sz - 4), maxf(cut - 2, 2), Color(col.r, col.g, col.b, 0.55), tlbr); pr.name = "Press"; pr.position = Vector2(2, 2); pr.visible = false; c.add_child(pr)
+	c.pivot_offset = Vector2(sz / 2.0, sz / 2.0)
+	return c
+
+## Pressed / engaged look (solid accent, slight shrink).
+static func set_pressed(c: Control, on: bool) -> void:
+	if c == null or not c.has_node("Press"):
+		return
+	c.get_node("Press").visible = on
+	var k: float = float(c.get_meta("scl", c.scale.x)) if c.has_meta("scl") else c.scale.x
+	if not c.has_meta("scl"):
+		c.set_meta("scl", c.scale.x)
+	c.scale = Vector2(k, k) * (0.9 if on else 1.0)
+
+## Cooldown mask with seconds; 0 hides it.
+static func set_cooldown(c: Control, secs: float) -> void:
+	if c == null or not c.has_node("Cd"):
+		return
+	var cd := c.get_node("Cd")
+	cd.visible = secs > 0.0
+	if secs > 0.0:
+		(cd.get_node("Secs") as Label).text = "%ds" % int(ceil(secs))
 
 ## Centre the button at `center` (top-left pivot, so account for the scale).
 static func place(c: Control, center: Vector2) -> void:

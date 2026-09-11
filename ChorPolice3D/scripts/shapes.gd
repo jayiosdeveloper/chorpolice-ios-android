@@ -9,6 +9,22 @@ static func rrect(size: Vector2, radius: float, color: Color) -> Polygon2D:
 	p.color = color
 	return p
 
+## Octagonal "tactical chamfer" (all 4 corners cut by `cut` px), top-left origin.
+static func chamfer_points(size: Vector2, cut: float) -> PackedVector2Array:
+	var w := size.x; var h := size.y; var c := cut
+	return PackedVector2Array([Vector2(c, 0), Vector2(w - c, 0), Vector2(w, c), Vector2(w, h - c), Vector2(w - c, h), Vector2(c, h), Vector2(0, h - c), Vector2(0, c)])
+
+## Chamfer only top-left + bottom-right corners (the design's "clip-tl-br").
+static func tlbr_points(size: Vector2, cut: float) -> PackedVector2Array:
+	var w := size.x; var h := size.y; var c := cut
+	return PackedVector2Array([Vector2(c, 0), Vector2(w, 0), Vector2(w, h - c), Vector2(w - c, h), Vector2(0, h), Vector2(0, c)])
+
+static func chamfer(size: Vector2, cut: float, color: Color, tlbr := false) -> Polygon2D:
+	var p := Polygon2D.new()
+	p.polygon = tlbr_points(size, cut) if tlbr else chamfer_points(size, cut)
+	p.color = color
+	return p
+
 static func circ(radius: float, color: Color) -> Polygon2D:
 	var p := Polygon2D.new()
 	var pts := PackedVector2Array()

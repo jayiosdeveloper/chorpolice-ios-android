@@ -14,6 +14,8 @@ const IDS := {
 	"desert_sand": "desert_sand", "sand_gravel": "sand_gravel", "ground_rock": "ground_rock",
 	"meadow_grass": "meadow_grass", "leafy_grass": "leafy_grass",
 	"forest_grass": "forest_grass", "forest_floor": "forest_floor", "forest_leaves": "forest_leaves", "mud_leaves": "mud_leaves", "rocky_ground": "rocky_ground", "forest_moss": "forest_moss",
+	"cliff_rock": "Rock023", "steel_wall": "CorrugatedSteel005", "diamond_plate": "MetalPlates013",
+	"concrete_worn": "Concrete036", "paving_stone": "PavingStones131", "dirt_cracked": "Ground033",
 }
 
 static var _cache := {}

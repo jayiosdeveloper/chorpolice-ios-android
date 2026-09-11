@@ -28,6 +28,8 @@ var _door_scene: PackedScene
 var _container_scene: PackedScene
 var _window_scene: PackedScene
 var _wall_lamp_scene: PackedScene
+var nav_region: NavigationRegion3D
+var nav_ready := false
 
 func build(l: Dictionary) -> void:
 	layout = l
@@ -115,15 +117,226 @@ func build(l: Dictionary) -> void:
 		var mp: String = "res://assets/real/models/%s/%s.glb" % [pl["model"], pl["model"]]
 		if ResourceLoader.exists(mp):
 			_place_model(load(mp), pl["pos"], pl.get("yaw", 0.0), pl.get("len", 10.0), pl.get("collide", "box"), pl.get("scale", 0.0), pl.get("rot_x", 0.0), pl.get("sink", 0.0))
+	for h in l.get("houses", []):
+		_kit_house(h)
+	for rd in l.get("roads", []):
+		_road(rd)
 	for t in l["trees"]:
 		_tree(t)
-	_scatter()
+	if bool(l.get("scatter", true)):
+		_scatter()
 	if not _plants.is_empty():
 		_scatter_plants(l["size"])
 	if _grass_scene:
 		_grass_field(l["size"])
 	if _fence_scene:
 		_build_fence(l["size"])
+	if bool(l.get("nav", false)):
+		_bake_nav()
+
+## Runtime navmesh over every static collider (roads, houses, doorways, containers) so
+## bots can path through the town instead of walking into walls.
+func _bake_nav() -> void:
+	nav_region = NavigationRegion3D.new()
+	var nm := NavigationMesh.new()
+	nm.geometry_parsed_geometry_type = NavigationMesh.PARSED_GEOMETRY_STATIC_COLLIDERS
+	nm.geometry_source_geometry_mode = NavigationMesh.SOURCE_GEOMETRY_GROUPS_WITH_CHILDREN
+	nm.geometry_source_group_name = "navsource"
+	add_to_group("navsource")
+	nm.geometry_collision_mask = 1
+	nm.agent_radius = 0.45
+	nm.agent_height = 1.9
+	nm.agent_max_climb = 0.55
+	nm.agent_max_slope = 50.0
+	nm.cell_size = 0.25
+	nm.cell_height = 0.25
+	nm.region_min_size = 4.0
+	nm.edge_max_error = 1.5
+	nav_region.navigation_mesh = nm
+	add_child(nav_region)
+	nav_region.bake_finished.connect(func() -> void:
+		nav_ready = true
+		print("[nav] baked polys=", nm.get_polygon_count()))
+	nav_region.bake_navigation_mesh(true)
+
+## Enterable HouseKit house centred on `pos` (spec in 2 m cells).
+func _kit_house(h: Dictionary) -> void:
+	var n := HouseKit.build(h["spec"], String(h.get("style", "concrete")))
+	var sz: Vector3 = n.get_meta("size", Vector3(6, 3, 6))
+	var yaw: float = float(h.get("yaw", 0.0))
+	n.rotation.y = yaw
+	n.position = (h["pos"] as Vector3) - Vector3(sz.x / 2.0, 0, sz.z / 2.0).rotated(Vector3.UP, yaw)
+	add_child(n)
+
+## Flat asphalt strip between two points (visual only, sits just above the ground).
+func _road(rd: Dictionary) -> void:
+	var a: Vector3 = rd["from"]; var b: Vector3 = rd["to"]; var w: float = float(rd.get("w", 5.0))
+	var len := a.distance_to(b)
+	if len < 0.1:
+		return
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new(); bm.size = Vector3(w, 0.06, len)
+	bm.material = surf("road", "rock_dark", 3.0) if _rs.has("road") else mat(Color(0.2, 0.2, 0.2))
+	mi.mesh = bm
+	mi.position = (a + b) * 0.5 + Vector3(0, 0.03, 0)
+	mi.look_at_from_position(mi.position, mi.position + (b - a).normalized(), Vector3.UP)
+	add_child(mi)
+	# edge lines
+	for sgn in [-1.0, 1.0]:
+		var ln := MeshInstance3D.new(); var lm := BoxMesh.new(); lm.size = Vector3(0.18, 0.02, len); lm.material = mat(Color(0.85, 0.82, 0.7), 0.9, false)
+		ln.mesh = lm; ln.position = Vector3(sgn * (w / 2.0 - 0.3), 0.05, 0); mi.add_child(ln)
+
+
+# MARK: island surroundings — beach, ocean, distant mountains, drifting clouds, birds
+
+var _water_mat: ShaderMaterial
+var _water_t := 0.0
+var _w_off1 := Vector2.ZERO
+var _w_off2 := Vector2.ZERO
+var _cloud_mats: Array = []
+var _birds: Array = []
+
+func _build_island(sz: Vector2) -> void:
+	var hw := sz.x / 2.0; var hd := sz.y / 2.0
+	# beach skirt: ground slopes from the map edge down into the water (30 m wide)
+	var skirt := 34.0
+	var sand := RealTex.mat("ground_sand", 12.0, false) if RealTex.has_assets() else mat(Color(0.8, 0.72, 0.55))
+	var st := SurfaceTool.new(); st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var ring: Array = [Vector3(-hw, 0, -hd), Vector3(hw, 0, -hd), Vector3(hw, 0, hd), Vector3(-hw, 0, hd)]
+	var outer: Array = [Vector3(-hw - skirt, -3.0, -hd - skirt), Vector3(hw + skirt, -3.0, -hd - skirt), Vector3(hw + skirt, -3.0, hd + skirt), Vector3(-hw - skirt, -3.0, hd + skirt)]
+	for i in 4:
+		var a: Vector3 = ring[i]; var b: Vector3 = ring[(i + 1) % 4]; var c: Vector3 = outer[(i + 1) % 4]; var d: Vector3 = outer[i]
+		for tri in [[a, b, c], [a, c, d]]:
+			var n: Vector3 = (tri[1] - tri[0]).cross(tri[2] - tri[0]).normalized()
+			if n.y < 0: n = -n
+			for v in tri:
+				st.set_normal(n); st.set_uv(Vector2(v.x, v.z) * 0.08); st.add_vertex(v)
+	st.generate_tangents()
+	var skm := MeshInstance3D.new(); skm.mesh = st.commit(); skm.material_override = sand; add_child(skm)
+	var skb := StaticBody3D.new(); skb.collision_layer = 1
+	var scs := CollisionShape3D.new(); scs.shape = skm.mesh.create_trimesh_shape(); skb.add_child(scs); add_child(skb)
+	# ocean: big plane with two scrolling procedural normal layers (no download needed, CC0-free)
+	var water := MeshInstance3D.new()
+	var pm := PlaneMesh.new(); pm.size = Vector2(2400, 2400); pm.subdivide_depth = 160; pm.subdivide_width = 160
+	_water_mat = ShaderMaterial.new()
+	_water_mat.shader = load("res://assets/real/fx/ocean.gdshader")
+	var nz := FastNoiseLite.new(); nz.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH; nz.frequency = 0.02; nz.fractal_octaves = 3
+	var nt := NoiseTexture2D.new(); nt.noise = nz; nt.as_normal_map = true; nt.bump_strength = 9.0; nt.seamless = true; nt.width = 256; nt.height = 256
+	_water_mat.set_shader_parameter("nmap", nt)
+	_water_mat.set_shader_parameter("half_w", hw); _water_mat.set_shader_parameter("half_d", hd)
+	pm.material = _water_mat; water.mesh = pm; water.position = Vector3(0, -1.2, 0); add_child(water)
+	# distant mountain range built from REAL Himalaya elevation data (AWS terrain tiles).
+	_build_real_mountains(hw, hd)
+	_build_clouds()
+	_build_birds()
+
+## A continuous mountain range wrapping the island, displaced by a real Himalayan heightmap
+## (assets/real/terrain/himalaya_height.png — decoded from AWS terrarium tiles). Sampled as a
+## polar ridge: distance from centre + height read from concentric bands of the map.
+func _build_real_mountains(hw: float, hd: float) -> void:
+	# a ring of REAL photogrammetry mountains (hero_mountain.glb, snow-capped) placed around
+	# the island, sunk so their flat tile base hides below the horizon and only peaks show.
+	var mp := "res://assets/real/models/hero_mountain/hero_mountain.glb"
+	if not ResourceLoader.exists(mp):
+		return
+	var scene: PackedScene = load(mp)
+	var rng := RandomNumberGenerator.new(); rng.seed = 771
+	var base_dist := maxf(hw, hd) + 340.0
+	var n := 11
+	for i in n:
+		var ang := TAU * float(i) / float(n) + rng.randf_range(-0.12, 0.12)
+		# leave the east side (open sea) mostly clear
+		if cos(ang) > 0.45 and absf(sin(ang)) < 0.55:
+			continue
+		var dist := base_dist + rng.randf_range(-40.0, 120.0)
+		var S := rng.randf_range(520.0, 760.0)                 # tile is 1 m wide -> S metres
+		var inst: Node3D = scene.instantiate()
+		add_child(inst)
+		inst.scale = Vector3(S, S * rng.randf_range(1.0, 1.45), S)  # a bit taller than the flat tile
+		inst.rotation.y = rng.randf_range(0.0, TAU)
+		inst.position = Vector3(cos(ang) * dist, -0.16 * S, sin(ang) * dist)  # sink the base underwater
+		for c in _all_mesh_instances(inst):
+			c.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+func _mountain_mesh(r: float, h: float, nz: FastNoiseLite, seed_: int) -> ArrayMesh:
+	var st := SurfaceTool.new(); st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var segs := 64; var rings := 16
+	var pts: Array = []
+	for ri in range(rings + 1):
+		var t := float(ri) / float(rings)
+		var row: Array = []
+		for si in segs:
+			var a := TAU * float(si) / float(segs)
+			var wob: float = 1.0 + 0.3 * nz.get_noise_2d(float(seed_) + cos(a) * 3.0, sin(a) * 3.0 + t * 5.0) + 0.12 * nz.get_noise_2d(float(seed_) * 2.0 + cos(a) * 9.0, sin(a) * 9.0 + t * 11.0)
+			var rr := r * (1.0 - t) * wob
+			var yy := h * pow(t, 1.35) * (1.0 + 0.15 * nz.get_noise_2d(float(seed_) * 0.3 + a * 2.0, t * 7.0))
+			row.append(Vector3(cos(a) * rr, yy, sin(a) * rr))
+		pts.append(row)
+	for ri in rings:
+		for si in segs:
+			var a: Vector3 = pts[ri][si]; var b: Vector3 = pts[ri][(si + 1) % segs]; var c: Vector3 = pts[ri + 1][(si + 1) % segs]; var d: Vector3 = pts[ri + 1][si]
+			for tri in [[a, b, c], [a, c, d]]:
+				for v in tri:
+					st.set_uv(Vector2(v.x, v.z) * 0.02); st.add_vertex(v)
+	st.index()
+	st.generate_normals()
+	st.generate_tangents()
+	return st.commit()
+
+## Two big soft cloud layers high above the map, drifting at different speeds.
+func _build_clouds() -> void:
+	var ctex: Texture2D = load("res://assets/real/sky/clouds_real.png") if ResourceLoader.exists("res://assets/real/sky/clouds_real.png") else null
+	for k in 2:
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		m.cast_shadow = false
+		if ctex:
+			m.albedo_texture = ctex
+			m.uv1_scale = Vector3(2.0 + k, 2.0 + k, 1)
+			m.albedo_color = Color(1, 1, 1, 0.92 if k == 0 else 0.6)
+		else:
+			m.albedo_color = Color(1, 1, 1, 0.5)
+		var q := PlaneMesh.new(); q.size = Vector2(2600, 2600); q.material = m
+		var mi := MeshInstance3D.new(); mi.mesh = q; mi.position = Vector3(0, 300.0 + k * 55.0, 0)
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(mi)
+		_cloud_mats.append([m, Vector3(0.0035, 0.0012, 0) * (1.0 if k == 0 else 1.8)])
+
+## A few birds gliding on slow elliptical paths high over the map (random timing).
+func _build_birds() -> void:
+	var img := Image.create(32, 16, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for x in 32:
+		var t := absf(float(x) - 15.5) / 15.5
+		var y := int(7.0 - 5.0 * (1.0 - t) * (1.0 - t))
+		for dy in 2:
+			img.set_pixel(x, clampi(y + dy, 0, 15), Color(0.05, 0.05, 0.06, 0.9))
+	var tex := ImageTexture.create_from_image(img)
+	var rng := RandomNumberGenerator.new(); rng.seed = 99
+	for i in 9:
+		var sp := Sprite3D.new(); sp.texture = tex; sp.pixel_size = 0.06; sp.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		sp.shaded = false; sp.double_sided = true
+		add_child(sp)
+		_birds.append({"n": sp, "c": Vector3(rng.randf_range(-80, 80), rng.randf_range(45, 90), rng.randf_range(-80, 80)), "rx": rng.randf_range(25, 70), "rz": rng.randf_range(18, 50), "sp": rng.randf_range(0.08, 0.16) * (1.0 if rng.randf() < 0.5 else -1.0), "ph": rng.randf_range(0, TAU), "flap": rng.randf_range(4.0, 7.0)})
+
+func _process(delta: float) -> void:
+	if _water_mat:
+		_water_t += delta
+		_w_off1 += Vector2(0.010, 0.006) * delta
+		_w_off2 -= Vector2(0.007, 0.011) * delta
+		_water_mat.set_shader_parameter("time_s", _water_t)
+		_water_mat.set_shader_parameter("off1", _w_off1)
+		_water_mat.set_shader_parameter("off2", _w_off2)
+	for e in _cloud_mats:
+		(e[0] as StandardMaterial3D).uv1_offset += e[1] * delta
+	var t := Time.get_ticks_msec() / 1000.0
+	for b in _birds:
+		var a: float = b["ph"] + t * b["sp"]
+		var p: Vector3 = b["c"] + Vector3(cos(a) * b["rx"], sin(t * 0.3 + b["ph"]) * 4.0, sin(a) * b["rz"])
+		(b["n"] as Sprite3D).position = p
+		(b["n"] as Sprite3D).scale = Vector3(1.0, 0.45 + 0.55 * absf(sin(t * b["flap"] + b["ph"])), 1.0)
 
 # MARK: materials
 
@@ -405,16 +618,44 @@ func _build_perimeter() -> void:
 	var hd := sz.y / 2.0
 	var rock := surf("rock", "rock", 3.0)
 	var edge := mat(_c("rock_edge", Color(0.3, 0.25, 0.2)))
+	var island: bool = bool(layout.get("island", false))
+	if island:
+		_build_island(sz)
+		var we := get_node_or_null("WorldEnvironment")
+		for c in get_children():
+			if c is WorldEnvironment and (c as WorldEnvironment).environment:
+				var en := (c as WorldEnvironment).environment
+				en.fog_density = 0.00035
+				en.fog_light_color = Color(0.7, 0.8, 0.9)
+				en.fog_aerial_perspective = 0.25
+				en.fog_sky_affect = 0.0
+				# coastal sky: blue overhead, pale horizon, sea-coloured ground half (drives reflections)
+				var skm2 := en.sky.sky_material if en.sky else null
+				if skm2 is ProceduralSkyMaterial:
+					var ps := skm2 as ProceduralSkyMaterial
+					ps.sky_top_color = Color(0.2, 0.42, 0.78)
+					ps.sky_horizon_color = Color(0.68, 0.8, 0.92)
+					ps.sky_curve = 0.12
+					ps.ground_horizon_color = Color(0.18, 0.34, 0.48)
+					ps.ground_bottom_color = Color(0.04, 0.1, 0.18)
 	# low visible walls
-	_static_box(Vector3(0, WALL_H / 2.0, -hd - 0.5), Vector3(sz.x + 2.0, WALL_H, 1.0), rock)
-	_static_box(Vector3(0, WALL_H / 2.0, hd + 0.5), Vector3(sz.x + 2.0, WALL_H, 1.0), rock)
-	_static_box(Vector3(-hw - 0.5, WALL_H / 2.0, 0), Vector3(1.0, WALL_H, sz.y + 2.0), rock)
-	_static_box(Vector3(hw + 0.5, WALL_H / 2.0, 0), Vector3(1.0, WALL_H, sz.y + 2.0), rock)
+	if not island:
+		_static_box(Vector3(0, WALL_H / 2.0, -hd - 0.5), Vector3(sz.x + 2.0, WALL_H, 1.0), rock)
+	if not island:
+		_static_box(Vector3(0, WALL_H / 2.0, hd + 0.5), Vector3(sz.x + 2.0, WALL_H, 1.0), rock)
+	if not island:
+		_static_box(Vector3(-hw - 0.5, WALL_H / 2.0, 0), Vector3(1.0, WALL_H, sz.y + 2.0), rock)
+	if not island:
+		_static_box(Vector3(hw + 0.5, WALL_H / 2.0, 0), Vector3(1.0, WALL_H, sz.y + 2.0), rock)
 	# cap trim
-	_visual(_box_mesh(Vector3(sz.x + 2.4, 0.3, 1.4)), Vector3(0, WALL_H + 0.15, -hd - 0.5), edge)
-	_visual(_box_mesh(Vector3(sz.x + 2.4, 0.3, 1.4)), Vector3(0, WALL_H + 0.15, hd + 0.5), edge)
-	_visual(_box_mesh(Vector3(1.4, 0.3, sz.y + 2.4)), Vector3(-hw - 0.5, WALL_H + 0.15, 0), edge)
-	_visual(_box_mesh(Vector3(1.4, 0.3, sz.y + 2.4)), Vector3(hw + 0.5, WALL_H + 0.15, 0), edge)
+	if not island:
+		_visual(_box_mesh(Vector3(sz.x + 2.4, 0.3, 1.4)), Vector3(0, WALL_H + 0.15, -hd - 0.5), edge)
+	if not island:
+		_visual(_box_mesh(Vector3(sz.x + 2.4, 0.3, 1.4)), Vector3(0, WALL_H + 0.15, hd + 0.5), edge)
+	if not island:
+		_visual(_box_mesh(Vector3(1.4, 0.3, sz.y + 2.4)), Vector3(-hw - 0.5, WALL_H + 0.15, 0), edge)
+	if not island:
+		_visual(_box_mesh(Vector3(1.4, 0.3, sz.y + 2.4)), Vector3(hw + 0.5, WALL_H + 0.15, 0), edge)
 	# invisible tall fence so jetpacks can't leave the arena
 	var fh := 40.0
 	_static_box(Vector3(0, fh / 2.0, -hd - 0.5), Vector3(sz.x + 2.0, fh, 1.0), null, 0, 0, false)
