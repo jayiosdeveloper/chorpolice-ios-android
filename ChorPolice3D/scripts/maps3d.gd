@@ -447,6 +447,7 @@ static func _dustline() -> Dictionary:
 			{"model": "meshy_house", "pos": Vector3(54, 0, 42), "yaw": 0.0, "len": 11.0, "collide": "trimesh"},
 			{"model": "meshy_house2", "pos": Vector3(-52, 0, -40), "yaw": 0.0, "len": 16.0, "collide": "trimesh"},
 			{"model": "komunarka", "pos": Vector3(0, 0, -84), "yaw": 0.0, "len": 38.0, "collide": "trimesh"},
+			{"model": "appartement", "pos": Vector3(66, 0, 60), "yaw": 0.0, "scale": 1.0, "collide": "trimesh", "sink": -0.03},
 		],
 		# roads: N-S, E-W (broken by the centre compound) + ring road around HQ
 		"roads": [
@@ -462,6 +463,8 @@ static func _dustline() -> Dictionary:
 			_h(-18, -64, 0.0, {"w": 6, "d": 4, "floors": 2, "doors": [["S", 2]], "windows": [["S", 0, 0], ["S", 5, 0], ["S", 1, 1], ["S", 4, 1], ["N", 2, 0], ["N", 3, 1]], "stairs": [5, 0], "roof": "flat", "inner": [[3, 0, 2, "z", 1]], "seed": 41}, "stone"),
 			_h(18, -64, 0.0, {"w": 6, "d": 4, "floors": 2, "doors": [["S", 3]], "windows": [["S", 1, 0], ["S", 4, 1], ["N", 4, 0], ["N", 1, 1], ["E", 1, 0], ["E", 2, 1]], "stairs": [0, 0], "roof": "flat", "inner": [[3, 0, 2, "z", 1]], "seed": 43}, "metal"),
 			_h(-70, -18, 0.26, {"w": 6, "d": 4, "floors": 5, "doors": [["E", 1], ["S", 4]], "windows": [["S", 1, 0], ["S", 3, 1], ["S", 1, 2], ["S", 4, 3], ["S", 2, 4], ["N", 3, 0], ["N", 1, 1], ["N", 4, 2], ["N", 2, 3], ["N", 4, 4], ["W", 2, 0], ["W", 1, 1], ["W", 2, 2], ["W", 1, 3], ["W", 2, 4], ["E", 2, 1], ["E", 1, 2], ["E", 2, 3], ["E", 1, 4]], "stairs": [5, 0], "roof": "flat", "seed": 53}, "concrete"),
+			# apartment block (66,60): kit shell — walls + flat roof + windows — around the real furnished apartment
+			_h(66, 60, 0.0, {"w": 4, "d": 6, "floors": 1, "open": true, "doors": [["W", 5], ["E", 5], ["N", 1]], "windows": [["E", 1, 0], ["E", 3, 0], ["W", 1, 0], ["W", 3, 0], ["N", 3, 0], ["S", 0, 0], ["S", 3, 0]], "stairs": null, "roof": "flat", "roof_stairs": false, "seed": 97}, "whitewash"),
 			_h(-40, 40, -0.35, {"w": 6, "d": 4, "floors": 2, "doors": [["N", 2], ["E", 2]], "windows": [["N", 5, 0], ["N", 1, 1], ["S", 2, 0], ["S", 4, 1], ["W", 1, 1]], "stairs": [5, 0], "roof": "flat", "inner": [[2, 0, 2, "z", 1]], "seed": 59}, "sandstone"),
 			_h(-80, -4, 0.0, {"w": 3, "d": 3, "floors": 2, "doors": [["E", 1]], "windows": [["N", 1, 0], ["W", 1, 1], ["S", 1, 1]], "stairs": [0, 0], "roof": "gable", "seed": 61}, "stone"),
 			_h(-76, 14, 0.35, {"w": 3, "d": 3, "floors": 3, "doors": [["N", 1]], "windows": [["E", 1, 0], ["E", 1, 1], ["W", 1, 2], ["S", 1, 1]], "stairs": [0, 0], "roof": "flat", "seed": 67}, "whitewash"),

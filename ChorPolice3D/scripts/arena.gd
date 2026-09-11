@@ -247,21 +247,28 @@ func _build_real_mountains(hw: float, hd: float) -> void:
 	var scene: PackedScene = load(mp)
 	var hm := _mountain_heightmap(scene)      # {n, min, size, data(PackedFloat32Array)}
 	var rng := RandomNumberGenerator.new(); rng.seed = 771
-	var base_dist := maxf(hw, hd) + 340.0
 	var n := 11
 	for i in n:
 		var ang := TAU * float(i) / float(n) + rng.randf_range(-0.12, 0.12)
 		# leave the east side (open sea) mostly clear
 		if cos(ang) > 0.45 and absf(sin(ang)) < 0.55:
 			continue
-		var dist := base_dist + rng.randf_range(-40.0, 120.0)
 		var S := rng.randf_range(520.0, 760.0)                 # tile is 1 m wide -> S metres
+		# keep the tile's near edge at least ~200 m past the island: the tiles are S wide, so
+		# the centre must sit S/2 + margin out (a fixed 440 m let ridges run over the town)
+		var dist := S * 0.5 + 330.0 + rng.randf_range(0.0, 60.0)
 		var yf := rng.randf_range(1.0, 1.45)                   # a bit taller than the flat tile
 		var inst: Node3D = scene.instantiate()
 		add_child(inst)
 		inst.scale = Vector3(S, S * yf, S)
 		inst.rotation.y = rng.randf_range(0.0, TAU)
-		inst.position = Vector3(cos(ang) * dist, -0.16 * S, sin(ang) * dist)  # sink the base underwater
+		# place the tile's GEOMETRIC centre at `dist` (the model's origin is not at its centre)
+		var centre := Vector3(cos(ang) * dist, -0.16 * S, sin(ang) * dist)  # sink the base underwater
+		var off := Vector3.ZERO
+		if not hm.is_empty():
+			var mn0: Vector3 = hm["min"]; var sz0: Vector3 = hm["size"]
+			off = Vector3((mn0.x + sz0.x * 0.5) * S, 0.0, (mn0.z + sz0.z * 0.5) * S).rotated(Vector3.UP, inst.rotation.y)
+		inst.position = centre - off
 		for c in _all_mesh_instances(inst):
 			c.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		if hm.is_empty():
