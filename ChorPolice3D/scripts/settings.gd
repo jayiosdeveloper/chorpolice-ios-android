@@ -71,7 +71,7 @@ var left_handed := false
 const HUD_DEFAULTS := {
 	"fire": Vector2(0.930, 0.800), "fire_l": Vector2(0.055, 0.440), "jump": Vector2(0.828, 0.675),
 	"reload": Vector2(0.775, 0.865), "nade": Vector2(0.888, 0.915), "scope": Vector2(0.963, 0.575),
-	"med": Vector2(0.735, 0.55), "skill": Vector2(0.735, 0.72), "door": Vector2(0.62, 0.62),
+	"med": Vector2(0.735, 0.55), "skill": Vector2(0.735, 0.72),
 }
 var hud_layout := {}
 var hud_scale := 1.0
@@ -80,7 +80,6 @@ var auto_fire := true                    # fire by itself when an enemy is in th
 var aim_sens := 1                        # 0 low, 1 normal, 2 high (touch look sensitivity)
 var haptics := true                     # vibration on shots / hits / blasts
 var gyro_aim := false                    # tilt the phone to fine-aim (gyroscope)
-var door_auto := true                    # doors open by themselves when you walk up (else DOOR button)
 var gyro_sens := 1.0                     # gyro aim strength multiplier
 var bot_level := 1
 var unlimited_ammo := false
@@ -162,7 +161,6 @@ func load_cfg() -> void:
 	left_handed = bool(c.get_value("s", "left", false))
 	auto_fire = bool(c.get_value("s", "autofire", true))
 	gyro_aim = bool(c.get_value("s", "gyro", false))
-	door_auto = bool(c.get_value("s", "door_auto", true))
 	haptics = bool(c.get_value("s", "haptics", true))
 	gyro_sens = float(c.get_value("s", "gyrosens", 1.0))
 	hud_scale = float(c.get_value("hud", "scale", 1.0))
@@ -198,7 +196,6 @@ func save_cfg() -> void:
 	c.set_value("s", "left", left_handed)
 	c.set_value("s", "autofire", auto_fire)
 	c.set_value("s", "gyro", gyro_aim)
-	c.set_value("s", "door_auto", door_auto)
 	c.set_value("s", "haptics", haptics)
 	c.set_value("s", "gyrosens", gyro_sens)
 	c.set_value("hud", "scale", hud_scale)

@@ -1,6 +1,6 @@
 ## HouseKit — builds enterable houses from the CC0 Kenney "Building Kit" (2 m grid, real
 ## scale) re-skinned with our real PBR textures (triplanar), with box colliders that leave
-## doorways / windows open, hinged auto-opening doors, stairs + upper floors and a roof.
+## doorways / windows open (open doorways, no door leaves), stairs + upper floors and a roof.
 ## Spec (cells of 2 m): {w, d, floors, style, doors:[[side, i]], windows:[[side, i, floor]],
 ## stairs: [cx, cz] or null, roof: "flat"|"gable", inner: [[x, z, len, axis, doorway_i]]}
 class_name HouseKit
@@ -149,136 +149,6 @@ static func _box(parent: Node3D, pos: Vector3, size: Vector3, yaw := 0.0) -> Sta
 	b.add_child(cs); parent.add_child(b)
 	return b
 
-## Real door leaves loaded once from doorset.glb (5 painted wooden doors + a frame).
-## _door_leaves holds {mesh, aabb} for the 5 leaves; _real_door_leaf() returns a MeshInstance3D
-## normalised into the Door\'s local space: hinge at origin, base at Y=0, leaf along +Z.
-static var _door_leaves: Array = []
-static var _door_loaded := false
-const DOORSET := "res://assets/real/kits/doors/doorset.glb"
-
-static func _load_door_leaves() -> void:
-	if _door_loaded:
-		return
-	_door_loaded = true
-	if not ResourceLoader.exists(DOORSET):
-		return
-	var scn: Node3D = (load(DOORSET) as PackedScene).instantiate()
-	var found: Array = []
-	_collect_mesh(scn, found)
-	# the 5 leaves are the "Object00x" meshes (skip the frame "Box013"); keep in name order
-	found.sort_custom(func(a, b): return String(a.name) < String(b.name))
-	for mi in found:
-		if String(mi.name).begins_with("Object"):
-			_door_leaves.append({"mesh": (mi as MeshInstance3D).mesh, "aabb": (mi as MeshInstance3D).get_aabb()})
-	scn.queue_free()
-
-static func _collect_mesh(n: Node, out: Array) -> void:
-	if n is MeshInstance3D:
-		out.append(n)
-	for c in n.get_children():
-		_collect_mesh(c, out)
-
-## A normalised real door leaf, or null if the set is missing. idx picks the colour (wraps).
-static func _real_door_leaf(idx: int, wdt: float, hgt: float) -> MeshInstance3D:
-	_load_door_leaves()
-	if _door_leaves.is_empty():
-		return null
-	var e: Dictionary = _door_leaves[posmod(idx, _door_leaves.size())]
-	var ab: AABB = e["aabb"]
-	# door-local axes: X = width, Y = thickness, Z = height (mm). Map to my X=thick, Y=up, Z=width.
-	var sw := (wdt - 0.04) / maxf(ab.size.x, 0.001)     # width  -> my +Z
-	var sh := hgt / maxf(ab.size.z, 0.001)              # height -> my +Y
-	var mi := MeshInstance3D.new(); mi.mesh = e["mesh"]
-	var basis := Basis(Vector3(0, 0, sw), Vector3(sh, 0, 0), Vector3(0, sh, 0))
-	var thick_mid := ab.position.y + ab.size.y * 0.5
-	var t := Vector3(-sh * thick_mid, -sh * ab.position.z, -sw * ab.position.x)
-	mi.transform = Transform3D(basis, t)
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	return mi
-
-## Hinged door. Auto mode: opens while any fighter is inside its trigger, closes 1.5 s after
-## everyone leaves (overlap-polled, so nothing gets stuck). Manual: DOOR button → toggle().
-class Door:
-	extends Node3D
-	var is_open := false
-	var _tw: Tween
-	var _close_t := 0.0
-	var _dir := 1.0
-	var _base := 0.0
-	var _area: Area3D
-	var _manual_t := 0.0                   # after a manual toggle, auto mode waits a bit
-	func _ready() -> void:
-		_base = rotation.y
-		add_to_group("doors")
-	func setup(leaf_mat: Material, dir: float, wdt := 1.4, hgt := 2.3, leaf_idx := -1) -> void:
-		_dir = dir
-		var w := wdt - 0.06
-		# a real textured door leaf (assets/real/kits/doors/doorset.glb); hinge at local origin,
-		# leaf lies flat, extends along +Z (width) with the base at Y=0 — falls back to a box.
-		var real: MeshInstance3D = HouseKit._real_door_leaf(leaf_idx, wdt, hgt)
-		if real != null:
-			add_child(real)
-		else:
-			var leaf := MeshInstance3D.new(); var bm := BoxMesh.new(); bm.size = Vector3(0.07, hgt - 0.05, w); bm.material = leaf_mat
-			leaf.mesh = bm; leaf.position = Vector3(0.0, (hgt - 0.05) / 2.0, w / 2.0 + 0.03); add_child(leaf)
-			var hm := MeshInstance3D.new(); var hb := BoxMesh.new(); hb.size = Vector3(0.16, 0.05, 0.14); hb.material = HouseKit._flat(Color(0.75, 0.72, 0.66))
-			hm.mesh = hb; hm.position = Vector3(0.0, 1.05, w - 0.18); add_child(hm)
-			var kp := MeshInstance3D.new(); var kb := BoxMesh.new(); kb.size = Vector3(0.085, 0.3, w - 0.1); kb.material = HouseKit._flat(Color(0.35, 0.34, 0.33))
-			kp.mesh = kb; kp.position = Vector3(0.0, 0.16, w / 2.0 + 0.03); add_child(kp)
-		var b := StaticBody3D.new(); b.collision_layer = 1; b.collision_mask = 0
-		var cs := CollisionShape3D.new(); var bs := BoxShape3D.new(); bs.size = Vector3(0.08, hgt - 0.05, w); cs.shape = bs
-		cs.position = Vector3(0.0, (hgt - 0.05) / 2.0, w / 2.0 + 0.03); b.add_child(cs); add_child(b)
-		_area = Area3D.new(); _area.collision_layer = 0; _area.collision_mask = 2 | 4 | 8; _area.monitoring = true
-		var acs := CollisionShape3D.new(); var sp := SphereShape3D.new(); sp.radius = 2.2; acs.shape = sp; acs.position = Vector3(0, 1.0, w / 2.0)
-		_area.add_child(acs); add_child(_area)
-	func someone_near() -> bool:
-		return _area != null and _area.has_overlapping_bodies()
-	func _process(delta: float) -> void:
-		_manual_t = maxf(0.0, _manual_t - delta)
-		var auto: bool = true
-		var st := get_tree().root.get_node_or_null("Settings")
-		if st != null and "door_auto" in st:
-			auto = bool(st.door_auto)
-		if not auto or _manual_t > 0.0:
-			return
-		if someone_near():
-			_close_t = 1.5
-			if not is_open:
-				set_open(true)
-		elif is_open:
-			_close_t -= delta
-			if _close_t <= 0.0:
-				set_open(false)
-	func toggle() -> void:
-		_manual_t = 3.0
-		set_open(not is_open)
-	## Swing away from whoever is closest (push a door open, it moves away from you).
-	func _pick_dir() -> void:
-		if _area == null:
-			return
-		var best: Node3D = null; var bd := 1e9
-		for b in _area.get_overlapping_bodies():
-			if b is Node3D:
-				var d: float = (b as Node3D).global_position.distance_to(global_position)
-				if d < bd:
-					bd = d; best = b
-		if best:
-			var lx := to_local(best.global_position).x
-			_dir = -1.0 if lx > 0.0 else 1.0
-	func set_open(o: bool) -> void:
-		if o == is_open:
-			return
-		if o:
-			_pick_dir()
-		is_open = o
-		if _tw: _tw.kill()
-		_tw = create_tween()
-		_tw.tween_property(self, "rotation:y", _base + ((deg_to_rad(105.0) * _dir) if o else 0.0), 0.45).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-		var au := get_tree().root.get_node_or_null("Audio")
-		if au:
-			au.play_at("swap", global_position, -6.0, 0.55 if o else 0.45)
-
-## Build a house; returns its root (already positioned / rotated by the caller).
 static func build(spec: Dictionary, style_name := "concrete") -> Node3D:
 	var style: Dictionary = STYLES.get(style_name, STYLES["concrete"])
 	var root := Node3D.new()
@@ -330,12 +200,6 @@ static func build(spec: Dictionary, style_name := "concrete") -> Node3D:
 					_box(root, pos + along * -0.85 + Vector3(0, DOOR_H / 2.0, 0), Vector3(0.28, DOOR_H, 0.3), cy)
 					_box(root, pos + along * 0.85 + Vector3(0, DOOR_H / 2.0, 0), Vector3(0.28, DOOR_H, 0.3), cy)
 					_box(root, pos + Vector3(0, DOOR_H + (FLOOR_H - DOOR_H) / 2.0, 0), Vector3(0.28, FLOOR_H - DOOR_H, 2.0), cy)
-					var zdir := Vector3(sin(cy), 0, cos(cy))
-					var door := Door.new()
-					door.setup(_mat(style, "door", 1.0), 1.0, DOOR_W, DOOR_H, int(spec.get("seed", 7)) + i)
-					door.position = pos - zdir * (DOOR_W / 2.0)
-					door.rotation.y = cy
-					root.add_child(door)
 				elif has_win:
 					_box(root, pos + Vector3(0, 0.5, 0), Vector3(0.28, 1.0, 2.0), cy)      # sill
 					_box(root, pos + Vector3(0, 1.85 + (FLOOR_H - 1.85) / 2.0, 0), Vector3(0.28, FLOOR_H - 1.85, 2.0), cy)     # lintel + band
@@ -358,11 +222,6 @@ static func build(spec: Dictionary, style_name := "concrete") -> Node3D:
 					_box(root, p2 + al * -0.85 + Vector3(0, DOOR_H / 2.0, 0), Vector3(0.2, DOOR_H, 0.3), yw)
 					_box(root, p2 + al * 0.85 + Vector3(0, DOOR_H / 2.0, 0), Vector3(0.2, DOOR_H, 0.3), yw)
 					_box(root, p2 + Vector3(0, DOOR_H + (FLOOR_H - DOOR_H) / 2.0, 0), Vector3(0.2, FLOOR_H - DOOR_H, 2.0), yw)
-					if f == 0:
-						var zdi := Vector3(sin(yw), 0, cos(yw))
-						var idoor := Door.new()
-						idoor.setup(_mat(style, "door", 1.0), 1.0, DOOR_W, DOOR_H, int(spec.get("seed", 7)) + i + 2)
-						idoor.position = p2 - zdi * (DOOR_W / 2.0); idoor.rotation.y = yw; root.add_child(idoor)
 				else:
 					_box(root, p2 + Vector3(0, FLOOR_H / 2.0, 0), Vector3(0.2, FLOOR_H, 2.0), yw)
 		# interior stairs: a walkable box-step flight rising one floor along +Z (3-cell hole above)
@@ -507,7 +366,7 @@ static func build(spec: Dictionary, style_name := "concrete") -> Node3D:
 		_merge_static(root)
 	return root
 
-## Merge every static MeshInstance3D under `root` (doors / lights / colliders excluded)
+## Merge every static MeshInstance3D under `root` (lights / colliders excluded)
 ## into one mesh per material — a house drops from ~150 draw calls to ~8.
 static func _merge_static(root: Node3D) -> void:
 	var groups := {}           # material -> SurfaceTool
@@ -515,8 +374,6 @@ static func _merge_static(root: Node3D) -> void:
 	var st: Array = [root]
 	while not st.is_empty():
 		var n: Node = st.pop_back()
-		if n is Door:
-			continue
 		if n is MeshInstance3D and (n as MeshInstance3D).mesh:
 			var mi := n as MeshInstance3D
 			var xf: Transform3D = root.global_transform.affine_inverse() * mi.global_transform if root.is_inside_tree() else _rel_xf(root, mi)

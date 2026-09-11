@@ -5,8 +5,8 @@
 class_name HudKit
 extends RefCounted
 
-const KINDS := ["fire", "fire_l", "jump", "reload", "nade", "scope", "med", "skill", "door"]
-const NAMES := {"fire": "FIRE", "fire_l": "FIRE (left)", "jump": "JUMP", "reload": "RELOAD", "nade": "GRENADE", "scope": "SCOPE", "med": "MEDKIT", "skill": "SKILL", "door": "DOOR"}
+const KINDS := ["fire", "fire_l", "jump", "reload", "nade", "scope", "med", "skill"]
+const NAMES := {"fire": "FIRE", "fire_l": "FIRE (left)", "jump": "JUMP", "reload": "RELOAD", "nade": "GRENADE", "scope": "SCOPE", "med": "MEDKIT", "skill": "SKILL"}
 
 const CYAN := Color(0.0, 0.94, 1.0)
 const AMBER := Color(1.0, 0.667, 0.0)
@@ -37,7 +37,6 @@ static func make(kind: String, scl := 1.0) -> Control:
 		"scope": c = _scope()
 		"med": c = _glyph_btn("✚", "MED", Color(0.35, 0.95, 0.5), 30)
 		"skill": c = _glyph_btn("★", "SKILL", Color(1.0, 0.8, 0.3), 34)
-		"door": c = _glyph_btn("⌂", "DOOR", Color(0.6, 0.9, 1.0), 28)
 		_: c = _nade()
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	c.scale = Vector2(scl, scl)

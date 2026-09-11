@@ -24,7 +24,6 @@ var _tree_variants: Array = []
 var _plants: Array = []
 var _fence_scene: PackedScene
 var _grass_scene: PackedScene
-var _door_scene: PackedScene
 var _container_scene: PackedScene
 var _window_scene: PackedScene
 var _wall_lamp_scene: PackedScene
@@ -59,8 +58,6 @@ func build(l: Dictionary) -> void:
 	if real:
 		if ResourceLoader.exists("res://assets/real/models/shipping_containers/shipping_containers.glb"):
 			_container_scene = load("res://assets/real/models/shipping_containers/shipping_containers.glb")
-		if ResourceLoader.exists("res://assets/real/models/rollershutter_door/rollershutter_door_1k.gltf"):
-			_door_scene = load("res://assets/real/models/rollershutter_door/rollershutter_door_1k.gltf")
 		if ResourceLoader.exists("res://assets/real/models/rollershutter_window_01/rollershutter_window_01_1k.gltf"):
 			_window_scene = load("res://assets/real/models/rollershutter_window_01/rollershutter_window_01_1k.gltf")
 		if ResourceLoader.exists("res://assets/real/models/industrial_wall_lamp/industrial_wall_lamp_1k.gltf"):
@@ -114,8 +111,14 @@ func build(l: Dictionary) -> void:
 	for s in l["structures"]:
 		_structure(s)
 	for pl in l.get("real_place", []):
-		var mp: String = "res://assets/real/models/%s/%s.glb" % [pl["model"], pl["model"]]
-		if ResourceLoader.exists(mp):
+		var mp := ""
+		for ext in ["glb", "fbx", "gltf"]:
+			var cand: String = "res://assets/real/models/%s/%s.%s" % [pl["model"], pl["model"], ext]
+			if ResourceLoader.exists(cand):
+				mp = cand; break
+		if mp == "":
+			push_warning("real_place: model not found: " + String(pl["model"]))
+		else:
 			_place_model(load(mp), pl["pos"], pl.get("yaw", 0.0), pl.get("len", 10.0), pl.get("collide", "box"), pl.get("scale", 0.0), pl.get("rot_x", 0.0), pl.get("sink", 0.0))
 	for h in l.get("houses", []):
 		_kit_house(h)
@@ -236,10 +239,13 @@ func _build_island(sz: Vector2) -> void:
 func _build_real_mountains(hw: float, hd: float) -> void:
 	# a ring of REAL photogrammetry mountains (hero_mountain.glb, snow-capped) placed around
 	# the island, sunk so their flat tile base hides below the horizon and only peaks show.
+	# Each one gets a HeightMapShape3D built from the tile's own vertices, so you can land on
+	# and climb the slopes but never pass through the rock.
 	var mp := "res://assets/real/models/hero_mountain/hero_mountain.glb"
 	if not ResourceLoader.exists(mp):
 		return
 	var scene: PackedScene = load(mp)
+	var hm := _mountain_heightmap(scene)      # {n, min, size, data(PackedFloat32Array)}
 	var rng := RandomNumberGenerator.new(); rng.seed = 771
 	var base_dist := maxf(hw, hd) + 340.0
 	var n := 11
@@ -250,13 +256,94 @@ func _build_real_mountains(hw: float, hd: float) -> void:
 			continue
 		var dist := base_dist + rng.randf_range(-40.0, 120.0)
 		var S := rng.randf_range(520.0, 760.0)                 # tile is 1 m wide -> S metres
+		var yf := rng.randf_range(1.0, 1.45)                   # a bit taller than the flat tile
 		var inst: Node3D = scene.instantiate()
 		add_child(inst)
-		inst.scale = Vector3(S, S * rng.randf_range(1.0, 1.45), S)  # a bit taller than the flat tile
+		inst.scale = Vector3(S, S * yf, S)
 		inst.rotation.y = rng.randf_range(0.0, TAU)
 		inst.position = Vector3(cos(ang) * dist, -0.16 * S, sin(ang) * dist)  # sink the base underwater
 		for c in _all_mesh_instances(inst):
 			c.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if hm.is_empty():
+			continue
+		var N: int = hm["n"]; var mn: Vector3 = hm["min"]; var sz: Vector3 = hm["size"]
+		var k: float = S * sz.x / float(N - 1)                 # metres per heightmap cell
+		var shape := HeightMapShape3D.new()
+		shape.map_width = N; shape.map_depth = N
+		var data: PackedFloat32Array = hm["data"].duplicate()
+		var sy := S * yf / k
+		for j in data.size():
+			data[j] *= sy
+		shape.map_data = data
+		var body := StaticBody3D.new(); body.collision_layer = 1; body.collision_mask = 0
+		body.position = inst.position; body.rotation.y = inst.rotation.y
+		var cs := CollisionShape3D.new(); cs.shape = shape
+		cs.scale = Vector3(k, k, k)
+		cs.position = Vector3((mn.x + sz.x * 0.5) * S, 0.0, (mn.z + sz.z * 0.5) * S)
+		body.add_child(cs); add_child(body)
+
+## Max-height grid (N x N) of a terrain-tile scene's vertices, in the tile's own units.
+## Computed once per session (the mesh is shared by every instance).
+static var _mtn_hm := {}
+func _mountain_heightmap(scene: PackedScene) -> Dictionary:
+	if not _mtn_hm.is_empty():
+		return _mtn_hm
+	var N := 129
+	var tmp: Node3D = scene.instantiate()
+	var mis := _all_mesh_instances(tmp)
+	var mn := Vector3(1e9, 1e9, 1e9); var mx := -mn
+	var verts: Array = []       # [PackedVector3Array, Transform3D]
+	for mi in mis:
+		if mi.mesh == null:
+			continue
+		var xf: Transform3D = _rel_transform(tmp, mi)
+		for si in mi.mesh.get_surface_count():
+			var arr: Array = mi.mesh.surface_get_arrays(si)
+			var pv: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			verts.append([pv, xf])
+			var ab: AABB = xf * mi.mesh.get_aabb()
+			mn = Vector3(minf(mn.x, ab.position.x), minf(mn.y, ab.position.y), minf(mn.z, ab.position.z))
+			mx = Vector3(maxf(mx.x, ab.end.x), maxf(mx.y, ab.end.y), maxf(mx.z, ab.end.z))
+	tmp.queue_free()
+	var sz := mx - mn
+	if sz.x < 0.001 or sz.z < 0.001:
+		return {}
+	var data := PackedFloat32Array(); data.resize(N * N); data.fill(0.0)
+	var have := PackedByteArray(); have.resize(N * N); have.fill(0)
+	for e in verts:
+		var pv: PackedVector3Array = e[0]; var xf: Transform3D = e[1]
+		for v in pv:
+			var p: Vector3 = xf * v
+			var i := int(round((p.x - mn.x) / sz.x * float(N - 1)))
+			var j := int(round((p.z - mn.z) / sz.z * float(N - 1)))
+			i = clampi(i, 0, N - 1); j = clampi(j, 0, N - 1)
+			var idx := j * N + i
+			var h := p.y - mn.y
+			if have[idx] == 0 or h > data[idx]:
+				data[idx] = h; have[idx] = 1
+	# fill any empty cells from a neighbour so there are no holes in the collider
+	for j in N:
+		for i in N:
+			var idx := j * N + i
+			if have[idx] == 0:
+				var best := 0.0
+				for dj in [-1, 0, 1]:
+					for di in [-1, 0, 1]:
+						var ii := clampi(i + di, 0, N - 1); var jj := clampi(j + dj, 0, N - 1)
+						if have[jj * N + ii] == 1: best = maxf(best, data[jj * N + ii])
+				data[idx] = best
+	_mtn_hm = {"n": N, "min": mn, "size": sz, "data": data}
+	return _mtn_hm
+
+## Transform of `node` relative to `root` (both in the same detached scene).
+func _rel_transform(root: Node3D, node: Node3D) -> Transform3D:
+	var xf := Transform3D.IDENTITY
+	var n: Node = node
+	while n != null and n != root:
+		if n is Node3D:
+			xf = (n as Node3D).transform * xf
+		n = n.get_parent()
+	return xf
 
 func _mountain_mesh(r: float, h: float, nz: FastNoiseLite, seed_: int) -> ArrayMesh:
 	var st := SurfaceTool.new(); st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -706,7 +793,7 @@ func _block(b: Dictionary) -> void:
 			if real and _container_scene:
 				cbody.get_parent().remove_child(cbody)
 				cbody.queue_free()
-			elif real and _door_scene:
+			elif real:
 				_dress_container(pos, size)
 		"barrier":
 			var bmat := surf("sandbag", "rock", 1.0)
@@ -836,11 +923,6 @@ func _wall_windows(pos: Vector3, size: Vector3) -> void:
 					at = Vector3(pos.x + sgn * face_off, 0, pos.z + f * span * 0.8)
 				_place_panel(_window_scene, at, dir, minf(span / float(n) * 0.7, 2.2), minf(size.y * 0.4, 1.8), pos.y + size.y * 0.2)
 			_wall_lamp(Vector3(pos.x + (span * 0.4 if long_x else sgn * face_off), pos.y + size.y * 0.42, pos.z + (sgn * face_off if long_x else span * 0.4)), dir)
-		# a roller door at the base of the longest face
-		if _door_scene and size.y >= 3.5:
-			var d := Vector3(0, 0, 1) if long_x else Vector3(1, 0, 0)
-			var fo: float = (size.z if long_x else size.x) / 2.0
-			_place_panel(_door_scene, Vector3(pos.x if long_x else pos.x + fo, 0, pos.z + fo if long_x else pos.z), d, 1.6, minf(size.y * 0.7, 2.4), 0.05)
 		return
 
 func _plat_top() -> Material:
@@ -978,9 +1060,7 @@ func _house(root: Node3D) -> void:
 	mi.material_override = mat(roof_col, 0.8)
 	body.add_child(mi)
 	root.add_child(body)
-	# door + windows (flat quads on the front face, z = -2.5)
-	var door := mat(Color(0.28, 0.18, 0.12), 0.9, false)
-	_visual(_box_mesh(Vector3(1.0, 2.0, 0.08)), Vector3(0, 1.0, -2.52), door, root)
+	# windows (flat quads on the front face, z = -2.5) — no door leaf, the opening stays open
 	var win := StandardMaterial3D.new()
 	win.albedo_color = Color(0.95, 0.85, 0.55)
 	win.emission_enabled = true
@@ -1027,7 +1107,6 @@ func _barn(root: Node3D) -> void:
 	mi.material_override = mat(Color(0.35, 0.3, 0.28), 0.85)
 	body.add_child(mi)
 	root.add_child(body)
-	_visual(_box_mesh(Vector3(2.6, 3.2, 0.1)), Vector3(0, 1.6, -3.55), mat(Color(0.3, 0.2, 0.14), 0.9, false), root)   # big door
 	_visual(_box_mesh(Vector3(0.2, 3.4, 0.12)), Vector3(-1.4, 1.7, -3.56), trim, root)
 	_visual(_box_mesh(Vector3(0.2, 3.4, 0.12)), Vector3(1.4, 1.7, -3.56), trim, root)
 	_visual(_box_mesh(Vector3(3.0, 0.2, 0.12)), Vector3(0, 3.3, -3.56), trim, root)

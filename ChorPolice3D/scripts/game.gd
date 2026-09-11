@@ -74,8 +74,6 @@ var boost_fill: ColorRect
 var vitals: Control
 var med_button: Control
 var skill_button: Control
-var door_button: Control
-var _near_door: Node = null
 var skill_cd := 0.0                  # seconds until the character skill is ready
 var skill_t := 0.0                   # seconds of active skill left
 var reveal_t := 0.0                  # Nova: enemies shown on the minimap regardless of range
@@ -517,7 +515,6 @@ func _build_hud() -> void:
 	scope_button = HudKit.make("scope", hs * Settings.hud_size_of("scope")); hud.add_child(scope_button)
 	med_button = HudKit.make("med", hs * Settings.hud_size_of("med")); hud.add_child(med_button)
 	skill_button = HudKit.make("skill", hs * Settings.hud_size_of("skill")); hud.add_child(skill_button)
-	door_button = HudKit.make("door", hs * Settings.hud_size_of("door")); hud.add_child(door_button); door_button.visible = false
 	reticle = _Reticle.new()
 	reticle.set_anchors_preset(Control.PRESET_FULL_RECT)
 	reticle.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -539,7 +536,7 @@ func _build_hud() -> void:
 	if lowhp_rect:
 		hud.move_child(scope_glass, lowhp_rect.get_index() + 1)     # over the 3D view
 		hud.move_child(scope_overlay, lowhp_rect.get_index() + 2)   # reticle on top of the glass, under buttons
-	for pair in [[nade_button, "nade"], [jump_button, "jump"], [fire_button, "fire"], [fire_button_l, "fire_l"], [reload_button, "reload"], [scope_button, "scope"], [med_button, "med"], [skill_button, "skill"], [door_button, "door"]]:
+	for pair in [[nade_button, "nade"], [jump_button, "jump"], [fire_button, "fire"], [fire_button_l, "fire_l"], [reload_button, "reload"], [scope_button, "scope"], [med_button, "med"], [skill_button, "skill"]]:
 		HudKit.place(pair[0], Settings.hud_center(pair[1], vp))
 
 	# grenade trajectory markers (3D, hidden until dragging)
@@ -2461,8 +2458,6 @@ func _input(event: InputEvent) -> void:
 		_use_medkit(); return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_X:
 		_use_skill(); return
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_E and _near_door:
-		_near_door.toggle(); return
 	if event is InputEventKey and (event.keycode == KEY_Q or event.keycode == KEY_E) and not event.echo:
 		lean = (-1.0 if event.keycode == KEY_Q else 1.0) if event.pressed else 0.0
 		return
@@ -2487,9 +2482,6 @@ func _input(event: InputEvent) -> void:
 				return
 			if skill_button and _btn_rect(skill_button, 8.0).has_point(event.position):
 				_use_skill()
-				return
-			if door_button and door_button.visible and _btn_rect(door_button, 8.0).has_point(event.position):
-				if _near_door: _near_door.toggle()
 				return
 			if _btn_rect(scope_button, 10.0).has_point(event.position):
 				_set_ads(not ads)
@@ -2553,7 +2545,7 @@ func _btn_rect(b: Control, pad: float) -> Rect2:
 	return b.get_global_rect().grow(pad)
 
 func _screen_on_ui(p: Vector2) -> bool:
-	return _btn_rect(nade_button, 12.0).has_point(p) or _btn_rect(jump_button, 12.0).has_point(p) or _btn_rect(reload_button, 8.0).has_point(p) or _btn_rect(scope_button, 8.0).has_point(p) or _btn_rect(med_button, 6.0).has_point(p) or _btn_rect(skill_button, 6.0).has_point(p) or (door_button != null and door_button.visible and _btn_rect(door_button, 6.0).has_point(p)) \
+	return _btn_rect(nade_button, 12.0).has_point(p) or _btn_rect(jump_button, 12.0).has_point(p) or _btn_rect(reload_button, 8.0).has_point(p) or _btn_rect(scope_button, 8.0).has_point(p) or _btn_rect(med_button, 6.0).has_point(p) or _btn_rect(skill_button, 6.0).has_point(p) \
 		or _btn_rect(fire_button, 12.0).has_point(p) or _btn_rect(fire_button_l, 8.0).has_point(p) \
 		or _btn_rect(next_button, 4.0).has_point(p) or p.y < 60.0 and p.x > get_viewport().get_visible_rect().size.x - 240.0
 
@@ -2887,17 +2879,6 @@ func _layout_vitals() -> void:
 
 ## Count / cooldown text on the MED, GLOO and SKILL buttons.
 func _update_action_buttons(_delta: float) -> void:
-	_near_door = null
-	var best_dd := 2.6
-	for dn in get_tree().get_nodes_in_group("doors"):
-		if dn is Node3D:
-			var dd: float = (dn as Node3D).global_position.distance_to(player.global_position)
-			if dd < best_dd:
-				best_dd = dd; _near_door = dn
-	if door_button:
-		door_button.visible = _near_door != null
-		if _near_door and door_button.has_node("Count"):
-			(door_button.get_node("Count") as Label).text = "▲" if not _near_door.is_open else "▼"
 	if med_button and med_button.has_node("Count"):
 		(med_button.get_node("Count") as Label).text = str(medkits)
 		med_button.modulate.a = 1.0 if medkits > 0 else 0.45

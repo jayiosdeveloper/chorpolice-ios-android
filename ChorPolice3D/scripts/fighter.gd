@@ -6,6 +6,7 @@ class_name Fighter
 extends CharacterBody3D
 
 const SPEED := 6.2
+const STEP_H := 0.55           # knee-high ledges (raised floors, kerbs, thresholds) are walked over
 const JUMP := 7.2
 const THRUST := 6.8
 const GRAVITY := 20.0
@@ -223,6 +224,8 @@ func control(move: Vector3, want_jet: bool, jump: bool, delta: float) -> void:
 		velocity.y -= GRAVITY * delta
 		fuel = minf(MAX_FUEL, fuel + (30.0 if on_floor else 8.0) * delta)
 	set_thrust(thrusting)
+	if on_floor and not thrusting and cur.length() > 0.5:
+		_try_step_up(cur * delta)
 	move_and_slide()
 	animate(delta)
 	# footsteps
@@ -275,6 +278,37 @@ func is_reloading() -> bool:
 	return model != null and model.reloading
 
 ## Picks the animation from the current motion. Remotes pass their synced values.
+## PUBG / Free Fire style step-up: when the horizontal move is blocked by a ledge no taller
+## than STEP_H (a raised floor, a kerb, a doorstep), lift the body onto it. Every stage is
+## checked with test_move so we never clip into geometry; real walls and gaps are left alone.
+func _try_step_up(motion: Vector3) -> void:
+	if motion.length_squared() < 1e-8:
+		return
+	var xf := global_transform
+	if not test_move(xf, motion):
+		return                                     # path is clear, nothing to step over
+	var up := Vector3(0, STEP_H, 0)
+	if test_move(xf, up):
+		return                                     # no head room
+	xf.origin += up
+	# step a full capsule radius onto the ledge, not just this frame's few millimetres, so we
+	# land on its top rather than its rounded edge
+	var fwd: Vector3 = motion.normalized() * maxf(motion.length(), 0.42)
+	if test_move(xf, fwd):
+		return                                     # still blocked higher up: a real wall
+	xf.origin += fwd
+	var down := KinematicCollision3D.new()
+	if not test_move(xf, -up, down):
+		return                                     # nothing to land on (overhang / gap)
+	if down.get_normal().y < 0.5:
+		return                                     # too steep to stand on
+	var gain: float = STEP_H + down.get_travel().y   # how much higher the landing is
+	if gain < 0.08:
+		return                                     # a gentle slope: move_and_slide handles it
+	global_position = xf.origin + down.get_travel() + Vector3(0, 0.01, 0)
+	if velocity.y < 0.0:
+		velocity.y = 0.0
+
 func animate(delta: float, grounded := true, hspeed := -1.0) -> void:
 	if not model or dead:
 		return
